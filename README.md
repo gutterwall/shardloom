@@ -71,6 +71,10 @@ Patterns can be chained into a song, or switched live.
 
 Recorded moves play back, and export, until you clear them.
 
+## Inspiration
+
+Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/sxrvys/Abjext), a Mac video editor and performance instrument that sequences footage like samples, with probability, per-step effects and music-driven visuals. ABJEXT's source isn't public, so Shardloom is an independent program written from scratch for Linux. It shares no code with ABJEXT and isn't affiliated with it.
+
 ## Tests
 
 ```sh
@@ -78,3 +82,7 @@ Recorded moves play back, and export, until you clear them.
 ```
 
 The tests make their own media with GStreamer and need headless OpenGL (EGL); the render tests are skipped without it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

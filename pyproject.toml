@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "A step-sequenced video instrument: random shards of footage, probability steps, music-driven colour and effects."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["numpy>=1.26", "moderngl>=5.10", "imgui-bundle>=1.6", "Pillow>=10"]
 
 [project.optional-dependencies]
