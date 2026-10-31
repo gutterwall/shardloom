@@ -7,7 +7,7 @@ for package in ("imgui_bundle", "av", "miniaudio", "moderngl", "glcontext"):
     datas += d
     binaries += b
     hidden += h
-hidden += collect_submodules("glcontext") + ["_miniaudio"]
+hidden += collect_submodules("glcontext") + ["_miniaudio", "_cffi_backend", "cffi"]
 
 a = Analysis(
     ["entry.py"],
