@@ -8,9 +8,11 @@ import time
 import numpy as np
 import moderngl
 from imgui_bundle import hello_imgui, imgui, immapp
+from imgui_bundle import portable_file_dialogs as pfd
 
 from . import fx as fxlib
-from .media import AudioPlayer
+from .export import Exporter
+from .media import AudioPlayer, MediaError
 from .renderer import Renderer
 from .sequencer import CHOICES, Modulation, Pattern, Step
 
@@ -54,6 +56,8 @@ class Player:
         self.dirty = False
         self.state = None
         self.frame_times: list[float] = []
+        self.export_job: Exporter | None = None
+        self.export_dialog = None
 
     # ---- setup -------------------------------------------------------
 
@@ -71,7 +75,13 @@ class Player:
         if self.t:
             self.audio.seek(self.t)
         if self.autoplay:
-            self.audio.play()
+            self.play()
+
+    def play(self) -> None:
+        try:
+            self.audio.toggle()
+        except MediaError as e:
+            self.say(str(e), 6.0)
 
     def before_exit(self) -> None:
         if self.audio:
@@ -100,7 +110,7 @@ class Player:
             return
         e = self.engine
         if imgui.is_key_pressed(imgui.Key.space, False):
-            self.audio.toggle()
+            self.play()
         if imgui.is_key_pressed(imgui.Key.tab, False):
             self.show_ui = not self.show_ui
         if imgui.is_key_pressed(imgui.Key.home, False):
@@ -149,6 +159,9 @@ class Player:
     # ---- frame -------------------------------------------------------
 
     def gui(self) -> None:
+        if self.export_job or self.export_dialog:
+            self.export_window()
+            return
         started = time.perf_counter()
         self.keys()
         t = self.now()
@@ -201,7 +214,7 @@ class Player:
         imgui.set_next_window_size(V2(500, 250), imgui.Cond_.first_use_ever)
         imgui.begin("Transport")
         if imgui.button("Pause" if self.audio.playing else "Play", V2(70, 0)):
-            self.audio.toggle()
+            self.play()
         imgui.same_line()
         if imgui.button("|<"):
             self.seek(0.0)
@@ -216,6 +229,11 @@ class Player:
         imgui.same_line()
         if imgui.button("Save" + ("*" if self.dirty else "")):
             self.save()
+        imgui.same_line()
+        if imgui.button("Export MP4"):
+            self.audio.pause()
+            self.export_dialog = pfd.save_file("Export video", str(self.s.dir / "render.mp4"),
+                                               ["MP4 video", "*.mp4"])
         imgui.same_line()
         imgui.text(f"{self.t:6.1f}s  step {self.state.step}  {p.patterns[self.state.pattern].name}")
         imgui.set_next_item_width(-1)
@@ -263,6 +281,56 @@ class Player:
         imgui.text_disabled("Space play  1-9 pattern  F fill  R record  Tab hide  Ctrl+S save  <- -> bar")
         imgui.text_disabled("Hold: Z invert  X rgb  C kaleido  V strobe  B trails  N glitch  M mirror")
         imgui.end()
+
+    # ---- export --------------------------------------------------------
+
+    def export_window(self) -> None:
+        if self.export_dialog is not None:
+            if not self.export_dialog.ready():
+                return
+            path = self.export_dialog.result()
+            self.export_dialog = None
+            if not path:
+                return
+            if not path.lower().endswith(".mp4"):
+                path += ".mp4"
+            from .sequencer import Engine
+
+            s = self.s
+            engine = Engine(copy.deepcopy(self.project), s.pool.shards, s.analysis,
+                            {sh.id: s.pool.length(sh.id) for sh in s.pool.shards}, s.pool.fps)
+            engine.song_mode = self.engine.song_mode
+            renderer = Renderer(self.ctx, self.project.width, self.project.height, s.pool)
+            try:
+                self.export_job = Exporter(engine, renderer, path)
+            except (MediaError, ValueError, OSError) as e:
+                self.say(f"Export failed: {e}", 8.0)
+            return
+        job = self.export_job
+        budget = time.perf_counter() + 1 / 30
+        try:
+            done = False
+            while not done and time.perf_counter() < budget:
+                done = job.step(1)
+        except (MediaError, OSError) as e:
+            self.export_job = None
+            self.say(f"Export failed: {e}", 8.0)
+            return
+        self.ctx.screen.use()
+        vp = imgui.get_main_viewport()
+        imgui.set_next_window_pos(V2(vp.pos.x + vp.size.x / 2, vp.pos.y + vp.size.y / 2), 0, V2(0.5, 0.5))
+        imgui.begin("Exporting", None, imgui.WindowFlags_.always_auto_resize | imgui.WindowFlags_.no_collapse)
+        imgui.text(job.path)
+        imgui.progress_bar(job.progress, V2(420, 0), f"{job.done} / {job.frames} frames")
+        cancel = imgui.button("Cancel")
+        imgui.end()
+        if cancel:
+            job.cancel()
+            self.export_job = None
+            self.say("Export cancelled")
+        elif done:
+            self.export_job = None
+            self.say(f"Exported {job.path} ({job.info()['took']:.0f} s)", 8.0)
 
     # ---- the grid ----------------------------------------------------
 

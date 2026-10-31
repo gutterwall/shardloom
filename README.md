@@ -4,14 +4,19 @@ A step-sequenced video instrument for Linux. Shardloom cuts your raw footage int
 
 ## Install
 
-Needs Python 3.11+, GStreamer 1.20+ with PyGObject (`python3-gi`, `gir1.2-gst-plugins-base-1.0`, plus the good, bad and libav plugin sets for decoding and `openh264enc`/`avenc_aac` for export), and OpenGL 3.3.
+**Windows:** download `Shardloom-…-windows-x64.zip` from [Releases](https://github.com/gutterwall/shardloom/releases), unzip it, and double-click `Shardloom.exe`.
+
+**Linux** (or Windows with Python 3.11+): everything installs with pip. Video goes through FFmpeg (PyAV) and sound through miniaudio, and you need OpenGL 3.3.
 
 ```sh
-python3 -m venv --system-site-packages .venv    # system site packages for PyGObject
+python3 -m venv .venv
 .venv/bin/pip install -e '.[test]'
+.venv/bin/shardloom          # the start window
 ```
 
 ## Use
+
+Run `shardloom` with no arguments for the start window: pick a song and videos, press **Make it**, and the instrument opens. Its **Export MP4** button renders the whole song. Everything is also on the command line:
 
 ```sh
 # Cut 48 shards from your videos and analyse the song (tempo, beats, intensity).
@@ -81,7 +86,7 @@ Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/
 .venv/bin/python -m pytest
 ```
 
-The tests make their own media with GStreamer and need headless OpenGL (EGL); the render tests are skipped without it.
+The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` with PyInstaller (`packaging/shardloom.spec`), and smoke-tests it.
 
 ## License
 

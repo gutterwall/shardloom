@@ -138,6 +138,17 @@ def cmd_play(args) -> None:
         screenshot_after=args.after, autoplay=args.autoplay)
 
 
+def _hide_own_console() -> None:
+    """On Windows, hides the console window when it is ours alone (started by a double-click)."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    kernel = ctypes.windll.kernel32
+    if kernel.GetConsoleProcessList((ctypes.c_uint * 2)(), 2) == 1:
+        ctypes.windll.user32.ShowWindow(kernel.GetConsoleWindow(), 0)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="shardloom", description="A step-sequenced video instrument.")
     ap.add_argument("--version", action="version", version=f"shardloom {__version__}")
@@ -195,6 +206,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--after", type=float, default=3.0, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_play)
 
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        # No arguments (double-clicked): the start window, then the instrument.
+        _hide_own_console()
+        from .launcher import run_launcher
+
+        folder = run_launcher()
+        if folder:
+            cmd_play(argparse.Namespace(dir=folder, fullscreen=False, start=0.0, screenshot=None, after=3.0,
+                                        autoplay=False))
+        return
     args = ap.parse_args(argv)
     args.func(args)
 

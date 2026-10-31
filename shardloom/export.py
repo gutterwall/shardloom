@@ -7,113 +7,110 @@ import time
 
 import numpy as np
 
-from .media import Gst, MediaError, SECOND, decode_audio
+from .media import Mp4Writer, decode_audio
 
 AUDIO_RATE = 44100
+AAC_FRAME = 1024
 
 
-def _caps_video(width: int, height: int, fps: float) -> str:
-    from .media import _fraction
+class Exporter:
+    """Renders [start, end) of a project frame by frame; step() lets a window keep drawing meanwhile."""
 
-    num, den = _fraction(fps)
-    return f"video/x-raw,format=RGB,width={width},height={height},framerate={num}/{den}"
+    def __init__(self, engine, renderer, out_path: str | os.PathLike, start: float = 0.0, end: float | None = None,
+                 fps: float | None = None, music: str | None = None, bitrate: int = 8_000_000):
+        self.engine, self.renderer, self.path = engine, renderer, str(out_path)
+        self.fps = fps or engine.project.fps
+        duration = engine.analysis.duration
+        if end is None:
+            end = duration
+        elif duration:
+            end = min(end, duration)
+        if end <= start:
+            raise ValueError("nothing to render: end is before start")
+        self.start, self.end = start, end
+        self.frames = int(round((end - start) * self.fps))
+        self.done = 0
+        music = music if music is not None else engine.project.music
+        self.audio = None
+        if music:
+            pcm = decode_audio(music, AUDIO_RATE, 2)
+            a0, a1 = int(start * AUDIO_RATE), int(end * AUDIO_RATE)
+            self.audio = pcm[a0:a1]
+            if len(self.audio) < a1 - a0:
+                self.audio = np.concatenate([self.audio, np.zeros((a1 - a0 - len(self.audio), 2), np.float32)])
+        self.writer = Mp4Writer(out_path, renderer.width, renderer.height, self.fps, bitrate,
+                                AUDIO_RATE if self.audio is not None else None)
+        self._apos = 0
+        self.started = time.perf_counter()
+        self.finished = False
+        engine.reset()
+
+    def step(self, frames: int = 1) -> bool:
+        """Renders up to frames more; True when the file is complete."""
+        try:
+            for _ in range(frames):
+                if self.done >= self.frames:
+                    self._finish()
+                    return True
+                i = self.done
+                self.renderer.render(self.engine.state(self.start + i / self.fps))
+                self.writer.write_video(self.renderer.read())
+                if self.audio is not None:
+                    # Keep the audio level with the video so the file interleaves well.
+                    want = min(len(self.audio), int((i + 1) / self.fps * AUDIO_RATE))
+                    while self._apos + AAC_FRAME <= want:
+                        self.writer.write_audio(self.audio[self._apos:self._apos + AAC_FRAME])
+                        self._apos += AAC_FRAME
+                self.done += 1
+            if self.done >= self.frames:
+                self._finish()
+                return True
+            return False
+        except BaseException:
+            self.cancel()
+            raise
+
+    def _finish(self) -> None:
+        if self.finished:
+            return
+        if self.audio is not None:
+            while self._apos < len(self.audio):
+                self.writer.write_audio(self.audio[self._apos:self._apos + AAC_FRAME])
+                self._apos += AAC_FRAME
+        self.writer.close()
+        self.finished = True
+
+    def cancel(self) -> None:
+        """Stops and removes the unfinished file."""
+        if self.finished:
+            return
+        self.finished = True
+        try:
+            self.writer.container.close()
+        except Exception:
+            pass
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+    @property
+    def progress(self) -> float:
+        return self.done / max(1, self.frames)
+
+    def info(self) -> dict:
+        took = time.perf_counter() - self.started
+        return {"frames": self.done, "seconds": self.end - self.start, "took": took,
+                "fps": self.done / took if took else 0.0}
 
 
 def export(engine, renderer, out_path: str | os.PathLike, start: float = 0.0, end: float | None = None,
            fps: float | None = None, music: str | None = None, bitrate: int = 8_000_000, progress=None) -> dict:
     """Renders [start, end) seconds of the project to out_path; returns timing figures."""
-    project = engine.project
-    fps = fps or project.fps
-    duration = engine.analysis.duration
-    end = duration if end is None else min(end, duration) if duration else end
-    if end <= start:
-        raise ValueError("nothing to render: end is before start")
-    frames = int(round((end - start) * fps))
-    w, h = renderer.width, renderer.height
-    music = music if music is not None else project.music
-
-    audio = None
-    if music:
-        pcm = decode_audio(music, AUDIO_RATE, 2)
-        a0, a1 = int(start * AUDIO_RATE), int(end * AUDIO_RATE)
-        audio = np.ascontiguousarray(pcm[a0:a1])
-        if len(audio) < a1 - a0:
-            audio = np.concatenate([audio, np.zeros((a1 - a0 - len(audio), 2), np.float32)])
-
-    desc = (
-        f"appsrc name=video format=time is-live=false block=true max-bytes={w * h * 3 * 8} caps={_caps_video(w, h, fps)} ! "
-        "queue ! videoconvert ! video/x-raw,format=I420 ! "
-        f"openh264enc bitrate={bitrate} rate-control=bitrate complexity=high gop-size={int(fps * 2)} ! h264parse ! "
-        "queue ! mp4mux name=mux faststart=true ! filesink name=out"
-    )
-    if audio is not None:
-        desc += (
-            f" appsrc name=audio format=time is-live=false block=true "
-            f"caps=audio/x-raw,format=F32LE,channels=2,rate={AUDIO_RATE},layout=interleaved ! "
-            "queue ! audioconvert ! avenc_aac bitrate=192000 ! aacparse ! queue ! mux."
-        )
-    pipeline = Gst.parse_launch(desc)
-    pipeline.get_by_name("out").set_property("location", str(out_path))
-    vsrc = pipeline.get_by_name("video")
-    asrc = pipeline.get_by_name("audio") if audio is not None else None
-    bus = pipeline.get_bus()
-    pipeline.set_state(Gst.State.PLAYING)
-
-    def check():
-        msg = bus.pop_filtered(Gst.MessageType.ERROR)
-        if msg:
-            err, _ = msg.parse_error()
-            pipeline.set_state(Gst.State.NULL)
-            raise MediaError(f"export: {err.message}")
-
-    chunk = 2048
-    apos = 0
-    started = time.perf_counter()
-    engine.reset()
-    try:
-        for i in range(frames):
-            t = start + i / fps
-            renderer.render(engine.state(t))
-            data = renderer.read().tobytes()
-            buf = Gst.Buffer.new_wrapped(data)
-            buf.pts = int(i * SECOND / fps)
-            buf.duration = int(SECOND / fps)
-            if vsrc.emit("push-buffer", buf) != Gst.FlowReturn.OK:
-                check()
-                raise MediaError("export: the encoder stopped accepting frames")
-            # Keep the audio a little ahead of the video so the muxer never waits.
-            if asrc is not None:
-                want = min(len(audio), int((i + 2) / fps * AUDIO_RATE))
-                while apos < want:
-                    n = min(chunk, len(audio) - apos)
-                    abuf = Gst.Buffer.new_wrapped(audio[apos:apos + n].tobytes())
-                    abuf.pts = int(apos * SECOND / AUDIO_RATE)
-                    abuf.duration = int(n * SECOND / AUDIO_RATE)
-                    asrc.emit("push-buffer", abuf)
-                    apos += n
-            if i % 30 == 0:
-                check()
-                if progress:
-                    progress(i, frames)
-        if asrc is not None:
-            while apos < len(audio):
-                n = min(chunk, len(audio) - apos)
-                abuf = Gst.Buffer.new_wrapped(audio[apos:apos + n].tobytes())
-                abuf.pts = int(apos * SECOND / AUDIO_RATE)
-                abuf.duration = int(n * SECOND / AUDIO_RATE)
-                asrc.emit("push-buffer", abuf)
-                apos += n
-            asrc.emit("end-of-stream")
-        vsrc.emit("end-of-stream")
-        msg = bus.timed_pop_filtered(600 * SECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
-        if msg is None:
-            raise MediaError("export: the file was not finished in time")
-        if msg.type == Gst.MessageType.ERROR:
-            err, _ = msg.parse_error()
-            raise MediaError(f"export: {err.message}")
-    finally:
-        pipeline.set_state(Gst.State.NULL)
-    took = time.perf_counter() - started
+    job = Exporter(engine, renderer, out_path, start, end, fps, music, bitrate)
+    while not job.step(30):
+        if progress:
+            progress(job.done, job.frames)
     if progress:
-        progress(frames, frames)
-    return {"frames": frames, "seconds": end - start, "took": took, "fps": frames / took if took else 0.0}
+        progress(job.frames, job.frames)
+    return job.info()

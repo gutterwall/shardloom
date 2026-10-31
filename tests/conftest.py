@@ -2,21 +2,24 @@ import numpy as np
 import pytest
 
 from shardloom.analysis import RATE
-from shardloom.media import Gst, SECOND
+from shardloom.media import Mp4Writer
 
 
 def make_video(path, pattern: str, seconds: float = 3.0, fps: int = 30, size=(320, 240)) -> str:
-    """A small H.264 MP4 from videotestsrc (ball: lots of motion; solid-color: none)."""
+    """A small H.264 MP4 (ball: a moving ball, lots of motion; still: one colour, none)."""
     w, h = size
-    pipeline = Gst.parse_launch(
-        f"videotestsrc pattern={pattern} num-buffers={int(seconds * fps)} ! "
-        f"video/x-raw,width={w},height={h},framerate={fps}/1 ! videoconvert ! openh264enc ! h264parse ! "
-        f"mp4mux ! filesink location={path}"
-    )
-    pipeline.set_state(Gst.State.PLAYING)
-    msg = pipeline.get_bus().timed_pop_filtered(60 * SECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
-    pipeline.set_state(Gst.State.NULL)
-    assert msg is not None and msg.type == Gst.MessageType.EOS, "could not make the test video"
+    writer = Mp4Writer(path, w, h, fps, 2_000_000)
+    yy, xx = np.mgrid[0:h, 0:w]
+    for i in range(int(seconds * fps)):
+        frame = np.zeros((h, w, 3), np.uint8)
+        if pattern == "ball":
+            cx = w / 2 + 0.4 * w * np.sin(i / 6.0)
+            cy = h / 2 + 0.35 * h * np.cos(i / 4.0)
+            frame[(xx - cx) ** 2 + (yy - cy) ** 2 < (h / 8) ** 2] = (255, 255, 255)
+        else:
+            frame[:] = (40, 90, 160)
+        writer.write_video(frame)
+    writer.close()
     return str(path)
 
 
@@ -51,7 +54,7 @@ def click_track(bpm: float, seconds: float = 20.0, start: float = 0.37, seed: in
 @pytest.fixture(scope="session")
 def videos(tmp_path_factory):
     d = tmp_path_factory.mktemp("videos")
-    return {"ball": make_video(d / "ball.mp4", "ball"), "still": make_video(d / "still.mp4", "solid-color")}
+    return {"ball": make_video(d / "ball.mp4", "ball"), "still": make_video(d / "still.mp4", "still")}
 
 
 @pytest.fixture(scope="session")

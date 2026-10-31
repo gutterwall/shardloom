@@ -5,4 +5,4 @@ probability step sequencer, and the picture follows the music's beat and
 intensity.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

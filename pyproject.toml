@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shardloom"
-version = "0.1.0"
+version = "0.2.0"
 description = "A step-sequenced video instrument: random shards of footage, probability steps, music-driven colour and effects."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["numpy>=1.26", "moderngl>=5.10", "imgui-bundle>=1.6", "Pillow>=10"]
+dependencies = ["numpy>=1.26", "moderngl>=5.10", "imgui-bundle>=1.6", "Pillow>=10", "av>=14", "miniaudio>=1.60"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
