@@ -59,18 +59,31 @@ jobs:
           Copy-Item mesa\x\x64\*.dll smoke\app
           Set-Location smoke
           app\Shardloom.exe --version
-          app\Shardloom.exe new proj --music media\song.wav --video media\ball.mp4 media\still.mp4 --count 12 --seed 1
+          python -c "from PIL import Image; Image.radial_gradient('L').convert('RGB').save('media/photo.jpg')"
+          app\Shardloom.exe new proj --music media\song.wav --video media\ball.mp4 media\still.mp4 media\photo.jpg --count 12 --seed 1 --format small
           if ($LASTEXITCODE) { exit 1 }
+          python -c "from shardloom.sequencer import Project, Title; p = Project.load('proj'); p.titles = [Title('Shardloom', 'smoke test', duration=5)]; p.save('proj')"
           app\Shardloom.exe render proj -o out.mp4 --start 8 --end 14
           if ($LASTEXITCODE) { exit 1 }
           python -c "from shardloom.media import probe; i = probe('out.mp4'); print(i); assert i['audio'] and abs(i['duration'] - 6) < 0.2"
-          app\Shardloom.exe play proj --start 10 --screenshot window.png --after 3
-          if (-not (Test-Path window.png)) { Write-Error "the live window did not open"; exit 1 }
+          app\Shardloom.exe render proj -o reel.mp4 --format instagram-reel --start 8 --end 10 --quality draft
+          if ($LASTEXITCODE) { exit 1 }
+          python -c "from shardloom.media import probe; i = probe('reel.mp4'); print(i); assert i['video']['width'] == 1080 and i['video']['height'] == 1920"
+          app\Shardloom.exe edit proj --screenshot editor.png --after 3
+          if (-not (Test-Path editor.png)) { Write-Error "the editor did not open"; exit 1 }
+          app\Shardloom.exe edit proj --layout Perform --screenshot perform.png --after 3
+          if (-not (Test-Path perform.png)) { Write-Error "the instrument did not open"; exit 1 }
+          app\Shardloom.exe pack proj -o proj.zip
+          if ($LASTEXITCODE) { exit 1 }
+          app\Shardloom.exe unpack proj.zip unpacked
+          if ($LASTEXITCODE) { exit 1 }
+          if (-not (Test-Path unpacked\pool\pool.json)) { Write-Error "unpacking did not rebuild the shards"; exit 1 }
       - uses: actions/upload-artifact@v5
         with:
           name: smoke-test
           path: |
-            smoke/window.png
+            smoke/editor.png
+            smoke/perform.png
             smoke/out.mp4
       - name: Zip
         shell: pwsh

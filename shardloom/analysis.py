@@ -179,6 +179,8 @@ class Analysis:
     beats: np.ndarray
     curves: dict[str, np.ndarray] = field(default_factory=dict)
     source: str = ""
+    # Which file this is of (name and size), to tell when the song has changed.
+    key: str = ""
 
     # ---- sampling -------------------------------------------------------
 
@@ -240,7 +242,7 @@ class Analysis:
         """A copy whose beats are a fixed grid (bpm from offset seconds) instead of tracked beats."""
         count = int((self.duration - offset) * bpm / 60.0) + 2
         beats = (offset + np.arange(count) * 60.0 / bpm) * self.fps
-        return Analysis(self.duration, self.fps, bpm, beats, self.curves, self.source)
+        return Analysis(self.duration, self.fps, bpm, beats, self.curves, self.source, self.key)
 
     # ---- storage --------------------------------------------------------
 
@@ -248,7 +250,7 @@ class Analysis:
         path = Path(path)
         np.savez_compressed(path.with_suffix(".npz"), beats=self.beats, **self.curves)
         meta = {"duration": self.duration, "fps": self.fps, "tempo": self.tempo, "source": self.source,
-                "beats": len(self.beats), "curves": sorted(self.curves)}
+                "key": self.key, "beats": len(self.beats), "curves": sorted(self.curves)}
         path.with_suffix(".json").write_text(json.dumps(meta, indent=1))
 
     @classmethod
@@ -258,7 +260,7 @@ class Analysis:
         with np.load(path.with_suffix(".npz")) as data:
             curves = {k: data[k] for k in meta["curves"]}
             beats = data["beats"]
-        return cls(meta["duration"], meta["fps"], meta["tempo"], beats, curves, meta.get("source", ""))
+        return cls(meta["duration"], meta["fps"], meta["tempo"], beats, curves, meta.get("source", ""), meta.get("key", ""))
 
 
 def analyse_samples(samples: np.ndarray, rate: int = RATE, source: str = "") -> Analysis:

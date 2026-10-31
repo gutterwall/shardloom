@@ -33,18 +33,20 @@ class Shard:
     brightness: float = 0.0
     # Rank of motion within the pool, 0 (calmest) .. 1 (busiest).
     energy: float = 0.0
+    source_id: str = ""
 
 
 def plan_cuts(durations: list[float], count: int, min_len: float, max_len: float, rng: random.Random,
-              overlap: bool = False) -> list[tuple[int, float, float]]:
-    """count random (source index, start, length) cuts, spread over the sources by duration.
+              overlap: bool = False, weights: list[float] | None = None) -> list[tuple[int, float, float]]:
+    """count random (source index, start, length) cuts, spread over the sources by duration (times weight).
 
     Without overlap, cuts of the same source do not overlap; when a source is
     too short for more, fewer cuts are returned.
     """
     if min_len <= 0 or max_len < min_len:
         raise ValueError("need 0 < min length <= max length")
-    eligible = [i for i, d in enumerate(durations) if d >= min_len]
+    weights = weights or [1.0] * len(durations)
+    eligible = [i for i, d in enumerate(durations) if d >= min_len and weights[i] > 0]
     if not eligible:
         return []
     taken: dict[int, list[tuple[float, float]]] = {i: [] for i in eligible}
@@ -53,7 +55,7 @@ def plan_cuts(durations: list[float], count: int, min_len: float, max_len: float
     while len(cuts) < count and attempts < count * 50:
         attempts += 1
         # A source is picked in proportion to its length.
-        src = rng.choices(eligible, weights=[durations[i] for i in eligible])[0]
+        src = rng.choices(eligible, weights=[durations[i] * weights[i] for i in eligible])[0]
         dur = durations[src]
         length = rng.uniform(min_len, min(max_len, dur))
         start = rng.uniform(0, max(0.0, dur - length))
@@ -121,7 +123,8 @@ def save_pool(pool_dir: Path, shards: list[Shard], width: int, height: int, fps:
 
 def load_pool(pool_dir: str | os.PathLike) -> list[Shard]:
     data = json.loads((Path(pool_dir) / POOL_FILE).read_text())
-    return [Shard(**s) for s in data["shards"]]
+    known = Shard.__dataclass_fields__
+    return [Shard(**{k: v for k, v in s.items() if k in known}) for s in data["shards"]]
 
 
 def pool_format(pool_dir: str | os.PathLike) -> dict:

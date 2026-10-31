@@ -149,11 +149,12 @@ class AudioPlayer:
     RATE = 48000
     BUFFER_MS = 30
 
-    def __init__(self, path: str | os.PathLike):
+    def __init__(self, path: str | os.PathLike | None = None, samples: np.ndarray | None = None):
+        """The song at path, or samples already decoded at RATE: float32 (n, 2)."""
         import miniaudio
 
         self._ma = miniaudio
-        self.samples = decode_audio(path, self.RATE, 2)
+        self.samples = samples if samples is not None else decode_audio(path, self.RATE, 2)
         self.duration = len(self.samples) / self.RATE
         self.playing = False
         self._lock = threading.Lock()
@@ -249,8 +250,9 @@ class Mp4Writer:
     """An MP4 with H.264 video from RGB frames and AAC audio from float samples."""
 
     def __init__(self, path: str | os.PathLike, width: int, height: int, fps: float, bitrate: int = 8_000_000,
-                 audio_rate: int | None = None):
-        self.container = av.open(str(path), "w", format="mp4")
+                 audio_rate: int | None = None, preset: str = "medium"):
+        # faststart: the index at the front, so uploads (YouTube, Instagram) can start processing early.
+        self.container = av.open(str(path), "w", format="mp4", options={"movflags": "+faststart"})
         num, den = _fraction(fps)
         codec = _video_codec()
         self.video = self.container.add_stream(codec, rate=Fraction(num, den))
@@ -258,7 +260,7 @@ class Mp4Writer:
         self.video.pix_fmt = "yuv420p"
         self.video.bit_rate = bitrate
         if codec == "libx264":
-            self.video.options = {"preset": "medium", "g": str(int(round(fps * 2)))}
+            self.video.options = {"preset": preset, "g": str(int(round(fps * 2)))}
         self.audio = None
         if audio_rate:
             self.audio = self.container.add_stream("aac", rate=audio_rate)

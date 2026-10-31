@@ -18,6 +18,7 @@ uniform vec2 res;
 uniform float time;
 uniform float seed;
 uniform bool flip;          // shard frames are stored top row first
+uniform vec2 crop;          // the part of the source that covers the output's shape
 uniform vec3 pal0, pal1, pal2;
 uniform float zoom, shake, mirror, kaleido, pixelate, glitch, rgb_split;
 uniform float hue, saturate, bw, posterize, invert, scanlines, colorize;
@@ -29,7 +30,7 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 vec2 wrap(vec2 p) { return 1.0 - abs(1.0 - mod(p, 2.0)); }   // mirrored repeat
 
 vec3 fetch(vec2 p) {
-    p = wrap(p);
+    p = (wrap(p) - 0.5) * crop + 0.5;
     if (flip) p.y = 1.0 - p.y;
     return texture(tex, p).rgb;
 }
@@ -148,5 +149,23 @@ void main() {
     c += flash * 0.6;
     if (strobe > 0.0 && step_phase < 0.5) c *= 1.0 - strobe;
     color = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+"""
+
+# A title (straight alpha) over the picture, then the fade to black.
+OVERLAY = """
+#version 330
+uniform sampler2D base;
+uniform sampler2D layer;
+uniform float alpha;
+uniform float fade;
+uniform bool flip_layer;    // title pictures are stored top row first
+in vec2 uv;
+out vec4 color;
+void main() {
+    vec3 c = texture(base, uv).rgb;
+    vec4 t = texture(layer, flip_layer ? vec2(uv.x, 1.0 - uv.y) : uv);
+    c = mix(c, t.rgb, t.a * alpha);
+    color = vec4(c * fade, 1.0);
 }
 """

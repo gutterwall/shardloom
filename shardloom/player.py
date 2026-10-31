@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import time
+from pathlib import Path
 
 import numpy as np
 import moderngl
@@ -11,7 +12,8 @@ from imgui_bundle import hello_imgui, imgui, immapp
 from imgui_bundle import portable_file_dialogs as pfd
 
 from . import fx as fxlib
-from .export import Exporter
+from . import formats
+from .export import Exporter, project_exporter
 from .media import AudioPlayer, MediaError
 from .renderer import Renderer
 from .sequencer import CHOICES, Modulation, Pattern, Step
@@ -33,6 +35,9 @@ def V4(r, g, b, a=1.0):
 
 def _key(name: str):
     return getattr(imgui.Key, name if not name.isdigit() else f"_{name}")
+
+
+WINDOWS = ["Output", "Transport", "Sequencer", "Edit", "Pool", "Music"]
 
 
 class Player:
@@ -58,20 +63,26 @@ class Player:
         self.frame_times: list[float] = []
         self.export_job: Exporter | None = None
         self.export_dialog = None
+        # Set by the editor: its render window takes the Export button.
+        self.on_export = None
+        self.out = None
+        self._ticked = -1
 
     # ---- setup -------------------------------------------------------
 
-    def post_init(self) -> None:
-        self.ctx = moderngl.create_context()
+    def post_init(self, ctx: moderngl.Context | None = None, song: np.ndarray | None = None) -> None:
+        """ctx: the window's OpenGL context (made here if not given); song: the soundtrack already decoded."""
+        self.ctx = ctx or moderngl.create_context()
         p = self.project
-        self.renderer = Renderer(self.ctx, p.width, p.height, self.s.pool)
+        # Live at a size the screen shows; exports render at the full output size.
+        self.renderer = Renderer(self.ctx, *formats.preview_size(p.width, p.height), self.s.pool)
         for shard in self.s.pool.shards:
             frame = self.s.pool.frame(shard.id, self.s.pool.length(shard.id) // 2)
             small = np.ascontiguousarray(frame[::4, ::4])
             tex = self.ctx.texture((small.shape[1], small.shape[0]), 3, small.tobytes())
             tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
             self.thumbs[shard.id] = tex
-        self.audio = AudioPlayer(p.music)
+        self.audio = AudioPlayer(self.s.music_path, samples=song)
         if self.t:
             self.audio.seek(self.t)
         if self.autoplay:
@@ -86,6 +97,13 @@ class Player:
     def before_exit(self) -> None:
         if self.audio:
             self.audio.close()
+
+    def release(self) -> None:
+        """Lets go of the sound device and the textures (the editor drops a player when the pool is re-cut)."""
+        self.before_exit()
+        for tex in self.thumbs.values():
+            tex.release()
+        self.thumbs.clear()
 
     def say(self, text: str, seconds: float = 2.5) -> None:
         self.message = text
@@ -158,17 +176,33 @@ class Player:
 
     # ---- frame -------------------------------------------------------
 
+    def tick(self, keys: bool = True) -> None:
+        """Once a frame: keys, the clock, and the picture."""
+        if self._ticked == imgui.get_frame_count():
+            return
+        self._ticked = imgui.get_frame_count()
+        started = time.perf_counter()
+        if keys:
+            self.keys()
+        t = self.now()
+        self.state = self.engine.state(t)
+        self.out = self.renderer.render(self.state)
+        self.ctx.screen.use()
+        self.frame_times = (self.frame_times + [time.perf_counter() - started])[-60:]
+
+    def window(self, name: str) -> None:
+        """One of the instrument's windows (for the editor, which docks them)."""
+        self.tick()
+        {"Output": lambda: self.output_window(self.out), "Transport": self.transport_window,
+         "Sequencer": self.grid_window, "Edit": self.edit_window, "Pool": self.pool_window,
+         "Music": self.music_window}[name]()
+
     def gui(self) -> None:
         if self.export_job or self.export_dialog:
             self.export_window()
             return
-        started = time.perf_counter()
-        self.keys()
-        t = self.now()
-        self.state = self.engine.state(t)
-        out = self.renderer.render(self.state)
-        self.ctx.screen.use()
-        self.frame_times = (self.frame_times + [time.perf_counter() - started])[-60:]
+        self.tick()
+        out = self.out
         if self.show_ui:
             self.output_window(out)
             self.transport_window()
@@ -232,8 +266,11 @@ class Player:
         imgui.same_line()
         if imgui.button("Export MP4"):
             self.audio.pause()
-            self.export_dialog = pfd.save_file("Export video", str(self.s.dir / "render.mp4"),
-                                               ["MP4 video", "*.mp4"])
+            if self.on_export:
+                self.on_export()
+            else:
+                self.export_dialog = pfd.save_file("Export video", str(self.s.dir / "render.mp4"),
+                                                   ["MP4 video", "*.mp4"])
         imgui.same_line()
         imgui.text(f"{self.t:6.1f}s  step {self.state.step}  {p.patterns[self.state.pattern].name}")
         imgui.set_next_item_width(-1)
@@ -300,9 +337,8 @@ class Player:
             engine = Engine(copy.deepcopy(self.project), s.pool.shards, s.analysis,
                             {sh.id: s.pool.length(sh.id) for sh in s.pool.shards}, s.pool.fps)
             engine.song_mode = self.engine.song_mode
-            renderer = Renderer(self.ctx, self.project.width, self.project.height, s.pool)
             try:
-                self.export_job = Exporter(engine, renderer, path)
+                self.export_job = project_exporter(s, self.ctx, path, engine=engine)
             except (MediaError, ValueError, OSError) as e:
                 self.say(f"Export failed: {e}", 8.0)
             return
@@ -517,7 +553,7 @@ class Player:
         imgui.text_wrapped(f"Click: use for the selected step.  Ctrl+click: add to / remove from lane {lane.name}'s pool.")
         step = p.patterns[self.edit_pattern].steps[self.sel_lane][self.sel_step]
         width = imgui.get_content_region_avail().x
-        tw = 96
+        tw = 96 if self.s.pool.width >= self.s.pool.height else 60
         per_row = max(1, int(width // (tw + 8)))
         playing = {l.voice.shard for l in self.state.lanes if l.voice}
         draw = imgui.get_window_draw_list()
@@ -525,7 +561,7 @@ class Player:
             if n % per_row:
                 imgui.same_line()
             pos = imgui.get_cursor_screen_pos()
-            size = V2(tw, tw * 9 / 16)
+            size = V2(tw, tw * self.s.pool.height / self.s.pool.width)
             if imgui.image_button(f"sh{shard.id}", imgui.ImTextureRef(self.thumbs[shard.id].glo), size):
                 if imgui.get_io().key_ctrl:
                     ids = list(lane.shards) if lane.shards is not None else []
@@ -540,7 +576,7 @@ class Player:
                 col = V4(1, 0.8, 0.2) if step.shard == shard.id else V4(0.3, 0.9, 0.5) if in_lane else V4(1, 1, 1, 0.7)
                 draw.add_rect(pos, V2(pos.x + tw + 8, pos.y + size.y + 8), imgui.get_color_u32(col), 3.0, thickness=2.0)
             if imgui.is_item_hovered():
-                imgui.set_tooltip(f"shard {shard.id}: {shard.duration:.2f} s from {shard.source.split('/')[-1]} "
+                imgui.set_tooltip(f"shard {shard.id}: {shard.duration:.2f} s from {Path(shard.source).name} "
                                   f"at {shard.start:.1f} s\nenergy {shard.energy:.2f}, brightness {shard.brightness:.2f}")
         imgui.end()
 

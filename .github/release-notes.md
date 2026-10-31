@@ -2,19 +2,24 @@
 
 1. Download `Shardloom-…-windows-x64.zip` below and unzip it anywhere.
 2. Open the `Shardloom` folder and double-click `Shardloom.exe`.
-3. Pick a song and some videos, then press **Make it**.
+3. Make a new project, choose a song, add videos and photos, and press **Cut shards**.
 
 Needs 64-bit Windows 10 or 11 and a graphics driver with OpenGL 3.3, which almost every PC from the last ten years has.
 
 Windows may warn that the app is from an unknown publisher, because it isn't code-signed. Choose **More info → Run anyway**.
 
-`Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `render`, `play` and `info`, the same as on Linux. See the README.
+`Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version
+## New in this version: the editor
 
-- **Start window:** choose a song and videos, set how many shards to cut, and press Make it.
-- **Export from the instrument:** the Export MP4 button renders the whole song with a progress bar.
-- **Media through FFmpeg (PyAV) and miniaudio:** Shardloom no longer needs GStreamer, so it installs with pip alone on Linux and Windows.
+- **Media:** queue up videos and photos, and choose the song (WAV, MP3, …). For each video, set its share of the cuts, a from/to range and which layers it plays in. Photos become shards: still, zooming or panning.
+- **Formats:** YouTube 720p, 1080p, 1440p, 4K and Shorts; Instagram Reel/Story, feed portrait, square and landscape; TikTok; or a custom size. Frame rate and quality. Render several sizes in one go.
+- **Titles** at the start or end, over the picture or on their own card, with font, colour, size, position, shadow, fade and a background colour or picture.
+- **Song section and fades:** use part of the song, trimmed on the timeline, with fades in and out.
+- **Self-contained projects:** each project folder keeps copies of its song, videos and photos. Save a copy as a new project, or pack it into one `.zip`; opening a `.zip` rebuilds the shards and analysis.
+- **The instrument is now a workspace in the same window**, docked, and fits smaller screens.
+
+Projects from 0.2 open in the editor. Their media is copied into the project the first time they're saved.
 
 ## Linux
 

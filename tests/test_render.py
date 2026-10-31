@@ -113,3 +113,41 @@ def test_export_end_to_end(tmp_path, ctx, videos, song):
     meta = probe(out)
     assert meta["duration"] == pytest.approx(3.0, abs=0.1)
     assert meta["audio"] and meta["video"]["width"] == W and meta["video"]["fps"] == pytest.approx(24)
+
+
+def test_shards_cover_another_shape_without_stretching(ctx):
+    # A 16:9 gradient drawn into a 9:16 output: only the middle of it shows, unstretched.
+    r = Renderer(ctx, 46, 82, Frames())
+    r.render(state([lane(0)]))
+    out = r.read().astype(int)
+    left, right = out[60, 0, 0], out[60, -1, 0]
+    expected_span = 255 * (46 / 82) / (W / H)
+    assert abs((right - left) - expected_span) < 12
+    assert abs((left + right) / 2 - 127) < 10
+
+
+def test_export_with_titles_and_cards(tmp_path, ctx, videos, song):
+    from shardloom.compose import Program
+    from shardloom.sequencer import Title
+
+    slice_videos([videos["ball"], videos["still"]], tmp_path / "pool", count=6, width=W, height=H, seed=3)
+    pool = PoolFrames(tmp_path / "pool")
+    a = analyse_file(song)
+    proj = starter_project(song, "pool")
+    proj.titles = [Title("Hi", at="start", extra=True, duration=1.0, background="colour", colour="#00ff00", fade=0.0),
+                   Title("End", at="end", extra=True, duration=0.5, fade=0.0)]
+    proj.output.update(start=10.0, end=12.0, fade_in=0.0, fade_out=0.0)
+    eng = Engine(proj, pool.shards, a, {s.id: pool.length(s.id) for s in pool.shards}, pool.fps)
+    out = tmp_path / "titled.mp4"
+    prog = Program(proj, a.duration)
+    info = export(eng, Renderer(ctx, W, H, pool), out, fps=20, program=prog)
+    assert info["frames"] == 70
+    meta = probe(out)
+    assert meta["duration"] == pytest.approx(3.5, abs=0.1) and meta["audio"]
+    from shardloom.media import VideoDecoder
+
+    with VideoDecoder(out, W, H, 20) as d:
+        first = d.segment(0.2, 0.05)[0].astype(int)
+        last = d.segment(3.3, 0.05)[0].astype(int)
+    assert first[5, 5, 1] > 200 and first[5, 5, 0] < 60     # the green card
+    assert last[5, 5].max() < 30                              # the closing card, on black

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 import sys
 from pathlib import Path
 
@@ -33,15 +34,15 @@ def _size(text: str) -> tuple[int, int]:
 class Session:
     """A project directory opened: project, pool frames, analysis and engine."""
 
-    def __init__(self, directory: str | Path):
+    def __init__(self, directory: str | Path, project=None):
         from .analysis import Analysis
         from .sequencer import Engine, Project
         from .slicer import PoolFrames
 
         self.dir = Path(directory)
-        if not (self.dir / "project.json").exists():
+        if project is None and not (self.dir / "project.json").exists():
             raise SystemExit(f"{self.dir}: not a Shardloom project (no project.json); create one with 'shardloom new'")
-        self.project = Project.load(self.dir)
+        self.project = project or Project.load(self.dir)
         self.pool = PoolFrames(self.dir / self.project.pool)
         if not self.pool.shards:
             raise SystemExit(f"{self.dir}: the pool is empty; add shards with 'shardloom slice'")
@@ -51,32 +52,95 @@ class Session:
         self.engine = Engine(self.project, self.pool.shards, self.analysis,
                              {s.id: self.pool.length(s.id) for s in self.pool.shards}, self.pool.fps)
 
+    @property
+    def music_path(self) -> Path:
+        from .sequencer import project_path
+
+        return project_path(self.dir, self.project.music)
+
     def save(self) -> None:
-        self.project.save(self.dir)
+        from .library import save_project
+
+        save_project(self.project, self.dir)
+
+    def close(self) -> None:
+        """Lets go of the pool's files (so they can be replaced, on Windows too)."""
+        self.pool._frames.clear()
 
 
 def cmd_new(args) -> None:
-    from .analysis import analyse_file
+    from . import formats, library
     from .sequencer import starter_project
-    from .slicer import slice_videos
 
     d = Path(args.dir)
     if (d / "project.json").exists() and not args.force:
         raise SystemExit(f"{d}: a project is already there (use --force to replace it)")
     d.mkdir(parents=True, exist_ok=True)
-    w, h = args.size
-    print(f"Cutting {args.count} shards from {len(args.video)} video(s)...", file=sys.stderr)
-    shards = slice_videos(args.video, d / "pool", args.count, args.min, args.max, w, h, args.fps, args.seed,
-                          progress=_bar("shards"))
-    print(f"Analysing {args.music}...", file=sys.stderr)
-    a = analyse_file(args.music)
-    a.save(d / ANALYSIS)
-    proj = starter_project(str(Path(args.music).resolve()), "pool", args.lanes, args.seed if args.seed is not None else 1)
-    proj.width, proj.height, proj.fps = w, h, args.fps
+    seed = args.seed if args.seed is not None else random.randint(1, 99999)
+    proj = starter_project("", library.POOL, args.lanes, seed)
+    proj.cut.update(count=args.count, min=args.min, max=args.max, seed=seed, detail=args.detail)
+    if args.size:
+        proj.output["format"] = "custom"
+        proj.width, proj.height = args.size
+    else:
+        f = formats.BY_KEY[args.format]
+        proj.output["format"] = f.key
+        proj.width, proj.height = f.width, f.height
+    proj.fps = args.fps
+    copy = not args.link
+    proj.music = library.import_file(d, args.music) if copy else str(Path(args.music).resolve())
+    for v in args.video:
+        library.add_source(proj, d, v, copy)
+    pw, ph = formats.pool_size(proj.width, proj.height, args.detail)
+    print(f"Cutting shards from {len(args.video)} file(s) at {pw}x{ph}...", file=sys.stderr)
+    shards = library.build_pool(proj, d, pw, ph, progress=_bar("shards"))
+    print(f"Analysing {Path(args.music).name}...", file=sys.stderr)
+    a = library.analyse_music(proj, d)
     proj.save(d)
     print(f"{d}: {len(shards)} shards, {a.duration:.0f} s of music at {a.tempo:.1f} BPM ({len(a.beats)} beats).")
-    print(f"Play it:   shardloom play {d}")
+    print(f"Edit it:   shardloom edit {d}")
     print(f"Export it: shardloom render {d} -o video.mp4")
+
+
+def cmd_build(args) -> None:
+    """Rebuilds what is missing or out of date: the shards and the song analysis."""
+    from . import formats, library
+    from .sequencer import Project
+
+    d = Path(args.dir)
+    proj = Project.load(d)
+    library.adopt_pool_sources(proj, d)
+    pw, ph = formats.pool_size(proj.width, proj.height, int(proj.cut.get("detail", 540)))
+    todo = library.needs_build(proj, d, pw, ph)
+    if args.force:
+        todo = {"pool": bool(proj.sources), "analysis": bool(proj.music)}
+    if todo["analysis"]:
+        print("Analysing the song...", file=sys.stderr)
+        library.analyse_music(proj, d)
+    if todo["pool"]:
+        shards = library.build_pool(proj, d, pw, ph, progress=_bar("shards"))
+        print(f"Cut {len(shards)} shards.")
+    library.save_project(proj, d)
+    if not any(todo.values()):
+        print("Everything is up to date.")
+
+
+def cmd_pack(args) -> None:
+    from . import library
+    from .sequencer import Project
+
+    d = Path(args.dir)
+    out = args.output or str(d.resolve()) + ".zip"
+    library.pack(Project.load(d), d, out, shards=args.with_shards, progress=_bar("files"))
+    print(f"Packed into {out}")
+
+
+def cmd_unpack(args) -> None:
+    from . import library
+
+    d = library.unpack(args.zip, args.dir)
+    print(f"Unpacked into {d}")
+    cmd_build(argparse.Namespace(dir=str(d), force=False))
 
 
 def cmd_slice(args) -> None:
@@ -90,15 +154,14 @@ def cmd_slice(args) -> None:
 
 
 def cmd_analyse(args) -> None:
-    from .analysis import analyse_file
+    from . import library
     from .sequencer import Project
 
     d = Path(args.dir)
     proj = Project.load(d)
     if args.music:
-        proj.music = str(Path(args.music).resolve())
-    a = analyse_file(proj.music)
-    a.save(d / ANALYSIS)
+        proj.music = library.import_file(d, args.music)
+    a = library.analyse_music(proj, d)
     proj.save(d)
     print(f"{a.duration:.0f} s at {a.tempo:.1f} BPM, {len(a.beats)} beats.")
 
@@ -120,15 +183,24 @@ def cmd_info(args) -> None:
 
 
 def cmd_render(args) -> None:
-    from .export import export
-    from .renderer import Renderer, headless_context
+    from . import formats
+    from .export import project_exporter, run
+    from .renderer import headless_context
 
     s = Session(args.dir)
-    w, h = args.size or (s.project.width, s.project.height)
-    r = Renderer(headless_context(), w, h, s.pool)
-    out = args.output or str(s.dir / "render.mp4")
-    info = export(s.engine, r, out, args.start, args.end, args.fps, bitrate=args.bitrate * 1000, progress=_bar("frames"))
+    size = args.size or ((formats.BY_KEY[args.format].width, formats.BY_KEY[args.format].height) if args.format else None)
+    out = args.output or str(s.dir / "renders" / f"{s.dir.resolve().name}.mp4")
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    job = project_exporter(s, headless_context(), out, size=size, fps=args.fps, quality=args.quality,
+                           start=args.start, end=args.end, titles=not args.no_titles)
+    info = run(job, _bar("frames"))
     print(f"{out}: {info['seconds']:.1f} s, {info['frames']} frames, rendered at {info['fps']:.0f} fps.")
+
+
+def cmd_edit(args) -> None:
+    from .editor import run_editor
+
+    run_editor(args.dir, layout=args.layout, screenshot=args.screenshot, screenshot_after=args.after)
 
 
 def cmd_play(args) -> None:
@@ -160,16 +232,44 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--max", type=float, default=1.5, help="longest shard, seconds")
         p.add_argument("--seed", type=int, default=None, help="same seed, same cuts")
 
-    p = sub.add_parser("new", help="create a project: cut shards from videos and analyse a song")
+    from .formats import BY_KEY, DETAIL
+
+    p = sub.add_parser("edit", help="the editor (the same as running shardloom with nothing after it)")
+    p.add_argument("dir", nargs="?", help="a project folder, or a packed project (.zip)")
+    p.add_argument("--layout", choices=["Edit", "Perform"], default="Edit")
+    p.add_argument("--screenshot", help=argparse.SUPPRESS)
+    p.add_argument("--after", type=float, default=4.0, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_edit)
+
+    p = sub.add_parser("new", help="create a project: copy in a song, videos and photos, cut shards, analyse the song")
     p.add_argument("dir")
     p.add_argument("--music", required=True)
-    p.add_argument("--video", required=True, nargs="+")
+    p.add_argument("--video", required=True, nargs="+", help="videos and photos")
     cut_options(p, 48)
     p.add_argument("--lanes", type=int, default=3)
-    p.add_argument("--size", type=_size, default=(640, 360), help="frame size, e.g. 640x360")
+    p.add_argument("--format", choices=list(BY_KEY), default="youtube-1080", help="output size")
+    p.add_argument("--size", type=_size, default=None, help="a custom output size instead, e.g. 1280x720")
+    p.add_argument("--detail", type=int, choices=list(DETAIL), default=540, help="shard frame size (short side)")
     p.add_argument("--fps", type=float, default=30.0)
+    p.add_argument("--link", action="store_true", help="use the files where they are instead of copying them in")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("build", help="rebuild the shards and the song analysis if they are missing or out of date")
+    p.add_argument("dir")
+    p.add_argument("--force", action="store_true", help="rebuild both anyway")
+    p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("pack", help="pack a project and its media into one .zip")
+    p.add_argument("dir")
+    p.add_argument("-o", "--output")
+    p.add_argument("--with-shards", action="store_true", help="include the cut shards (bigger, opens faster)")
+    p.set_defaults(func=cmd_pack)
+
+    p = sub.add_parser("unpack", help="unpack a packed project and rebuild its shards")
+    p.add_argument("zip")
+    p.add_argument("dir", nargs="?")
+    p.set_defaults(func=cmd_unpack)
 
     p = sub.add_parser("slice", help="cut more shards into a project's pool")
     p.add_argument("dir")
@@ -190,11 +290,13 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("render", help="export the project to an MP4")
     p.add_argument("dir")
     p.add_argument("-o", "--output")
-    p.add_argument("--start", type=float, default=0.0)
+    p.add_argument("--start", type=float, default=None, help="song time to start from (default: the project's)")
     p.add_argument("--end", type=float, default=None)
     p.add_argument("--fps", type=float, default=None)
+    p.add_argument("--format", choices=list(BY_KEY), default=None, help="output size (default: the project's)")
     p.add_argument("--size", type=_size, default=None)
-    p.add_argument("--bitrate", type=int, default=8000, help="video kbit/s")
+    p.add_argument("--quality", choices=["draft", "good", "best"], default=None)
+    p.add_argument("--no-titles", action="store_true")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("play", help="the live instrument")
@@ -208,15 +310,16 @@ def main(argv: list[str] | None = None) -> None:
 
     if argv is None:
         argv = sys.argv[1:]
-    if not argv:
-        # No arguments (double-clicked): the start window, then the instrument.
+    if not argv or (len(argv) == 1 and Path(argv[0]).suffix.lower() in (".zip", ".json")
+                    or len(argv) == 1 and Path(argv[0], "project.json").exists()):
+        # No arguments (double-clicked), or a project dropped on the program: the editor.
         _hide_own_console()
-        from .launcher import run_launcher
+        from .editor import run_editor
 
-        folder = run_launcher()
-        if folder:
-            cmd_play(argparse.Namespace(dir=folder, fullscreen=False, start=0.0, screenshot=None, after=3.0,
-                                        autoplay=False))
+        target = argv[0] if argv else None
+        if target and Path(target).name == "project.json":
+            target = str(Path(target).parent)
+        run_editor(target)
         return
     args = ap.parse_args(argv)
     args.func(args)

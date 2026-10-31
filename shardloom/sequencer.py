@@ -45,6 +45,8 @@ class Lane:
     shards: list[int] | None = None
     fx: dict[str, float] = field(default_factory=dict)
     mute: bool = False
+    # Only shards cut from these sources (Source.id): None for any.
+    sources: list[str] | None = None
 
 
 @dataclass
@@ -59,6 +61,49 @@ class Modulation:
     source: str = "bass"
     target: str = "master.zoom"    # master.<fx>, lane<N>.<fx>, or all.<fx>
     amount: float = 0.3
+
+
+@dataclass
+class Source:
+    """A video or photo the pool is cut from. path is relative to the project folder once it is copied in."""
+    path: str = ""
+    kind: str = "video"            # video | photo
+    id: str = ""
+    enabled: bool = True
+    weight: float = 1.0            # videos: share of the cuts
+    start: float = 0.0             # videos: use only from here...
+    end: float | None = None       # ...to here (None: the end)
+    motion: str = "random"         # photos: still, zoom_in, zoom_out, pan, random
+    shards: int = 2                # photos: how many shards to make
+
+
+@dataclass
+class Title:
+    """A title at the start or end of the video."""
+    text: str = "Title"
+    subtitle: str = ""
+    at: str = "start"              # start | end
+    duration: float = 4.0
+    # Its own time before (or after) the song, in silence, instead of over the picture.
+    extra: bool = False
+    background: str = "none"       # none | colour | image
+    colour: str = "#000000"
+    image: str = ""
+    text_colour: str = "#ffffff"
+    font: str = ""                 # a font file name; empty for the built-in one
+    size: float = 0.1              # text height, as a share of the frame's short side
+    position: str = "center"       # upper | center | lower
+    fade: float = 0.6
+    shadow: bool = True
+
+
+def default_cut() -> dict:
+    return {"count": 48, "min": 0.25, "max": 1.5, "seed": 1, "detail": 540}
+
+
+def default_output() -> dict:
+    return {"format": "youtube-1080", "quality": "good", "start": 0.0, "end": None, "fade_in": 0.0, "fade_out": 1.0,
+            "queue": []}
 
 
 @dataclass
@@ -85,6 +130,11 @@ class Project:
     palette_bars: int = 8
     # Recorded live moves: [{"step": g, "type": "pattern", "value": 1}, {"t": s, "type": "punch", "fx": "invert", "on": true}, ...]
     performance: list[dict] = field(default_factory=list)
+    # The editor: what the pool is cut from and how, the titles and the output.
+    sources: list[Source] = field(default_factory=list)
+    cut: dict = field(default_factory=default_cut)
+    titles: list[Title] = field(default_factory=list)
+    output: dict = field(default_factory=default_output)
 
     # ---- files ---------------------------------------------------------
 
@@ -94,15 +144,19 @@ class Project:
     @classmethod
     def from_dict(cls, d: dict) -> "Project":
         d = dict(d)
-        lanes = [Lane(**l) for l in d.pop("lanes", [])]
+        lanes = [Lane(**_known(Lane, l)) for l in d.pop("lanes", [])]
         patterns = []
         for p in d.pop("patterns", []):
             p = dict(p)
             steps = [[Step(**s) for s in lane] for lane in p.pop("steps", [])]
             patterns.append(Pattern(steps=steps, **p))
         mods = [Modulation(**m) for m in d.pop("modulations", [])]
-        known = {f for f in cls.__dataclass_fields__}
-        proj = cls(lanes=lanes, patterns=patterns, modulations=mods, **{k: v for k, v in d.items() if k in known})
+        sources = [Source(**_known(Source, s)) for s in d.pop("sources", [])]
+        titles = [Title(**_known(Title, t)) for t in d.pop("titles", [])]
+        cut = {**default_cut(), **d.pop("cut", {})}
+        output = {**default_output(), **d.pop("output", {})}
+        proj = cls(lanes=lanes, patterns=patterns, modulations=mods, sources=sources, titles=titles, cut=cut,
+                   output=output, **_known(cls, d))
         proj.normalise()
         return proj
 
@@ -126,6 +180,17 @@ class Project:
                 while len(row) < p.length:
                     row.append(Step())
                 del row[p.length:]
+
+
+def _known(cls, d: dict) -> dict:
+    """The keys of d that cls has, so files from newer or older versions still load."""
+    return {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+
+
+def project_path(directory: str | os.PathLike, path: str) -> Path:
+    """A path stored in a project, relative to its folder unless absolute."""
+    p = Path(path)
+    return p if p.is_absolute() else Path(directory) / p
 
 
 def starter_project(music: str, pool: str, lanes: int = 3, seed: int = 1) -> Project:
@@ -314,6 +379,8 @@ class Engine:
 
     def _candidates(self, lane: Lane) -> list[int]:
         ids = [i for i in (lane.shards if lane.shards is not None else self.shards) if i in self.shards]
+        if lane.sources is not None:
+            ids = [i for i in ids if getattr(self.shards[i], "source_id", "") in lane.sources]
         return ids or list(self.shards)
 
     def _choose(self, li: int, lane: Lane, step: Step, g: int, t: float) -> int:

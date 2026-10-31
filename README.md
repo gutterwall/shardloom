@@ -1,6 +1,6 @@
 # Shardloom
 
-A step-sequenced video instrument for Linux. Shardloom cuts your raw footage into small random **shards**, plays them from a probability step sequencer locked to your song's beats, and lets the music's intensity and beat drive colour, palettes and effects. Play it live, record your moves, and export a frame-exact MP4.
+A step-sequenced video instrument and editor for Linux and Windows. Shardloom cuts your raw footage and photos into small random **shards**, plays them from a probability step sequencer locked to your song's beats, and lets the music's intensity and beat drive colour, palettes and effects. Add opening and closing titles, play it live, record your moves, and render frame-exact MP4s sized for YouTube or Instagram.
 
 ## Install
 
@@ -11,30 +11,59 @@ A step-sequenced video instrument for Linux. Shardloom cuts your raw footage int
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -e '.[test]'
-.venv/bin/shardloom          # the start window
+.venv/bin/shardloom          # the editor
 ```
 
-## Use
+## The editor
 
-Run `shardloom` with no arguments for the start window: pick a song and videos, press **Make it**, and the instrument opens. Its **Export MP4** button renders the whole song. Everything is also on the command line:
+Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a new project. The window has two workspaces, switched at the top:
+
+**Edit**
+- **Media:** choose the song (WAV, MP3, FLAC, …) and add videos and photos to cut from. For each video, set its share of the cuts and use only part of it (from / to). Each photo becomes one or more shards: still, slow zoom in or out, or a pan. Choose which layers each file plays in. Set the number and length of the shards, the seed and the shard detail, then press **Cut shards**.
+- **Preview:** the finished video, with its titles and fades, in the output's shape.
+- **Timeline:** title cards, titles over the picture and the song section. Click to move the playhead. Drag the blue ends of the song strip to use only part of the song.
+- **Video settings:**
+  - **Format:** YouTube (720p, 1080p, 1440p, 4K, Shorts), Instagram (Reel/Story 9:16, feed 4:5, square, landscape), TikTok or a custom size; frame rate; quality; song section; fade in and out.
+  - **Titles:** text and subtitle, at the start or end, over the picture or on their own card before or after the song. Each has a position, size, colour, font, shadow, fade, and a background colour or picture.
+  - **Render:** render the current size, or several sizes one after the other into `renders/`.
+
+**Perform:** the instrument (sequencer, step editor, pool and music links), described below.
+
+### Projects keep everything
+
+A project is a folder that keeps a copy of every file it uses, so it can be moved, edited again or rebuilt anywhere:
+
+```
+My video/
+  project.json   the edit: media list, cut settings, sequencer, titles, output
+  media/         copies of the song, videos, photos and title pictures
+  pool/          the cut shards (rebuilt from media/ when missing)
+  analysis.*     the song's beats and loudness (rebuilt when missing)
+  renders/       your rendered videos
+```
+
+The **File** menu can save a copy as a new project, or pack a project into one `.zip` with its media. Opening a `.zip` unpacks it and rebuilds the shards and analysis. The same seed and settings always cut the same shards.
+
+## The command line
 
 ```sh
-# Cut 48 shards from your videos and analyse the song (tempo, beats, intensity).
-shardloom new myvideo --music song.mp3 --video clip1.mp4 clip2.mov --count 48 --min 0.25 --max 1.5
+# A project from a song, videos and photos (copied in), cut and analysed.
+shardloom new myvideo --music song.mp3 --video clip1.mp4 clip2.mov photo.jpg --format instagram-reel
 
-shardloom play myvideo              # the live instrument
-shardloom render myvideo -o out.mp4 # export (about ten times faster than real time)
+shardloom edit myvideo                       # the editor
+shardloom play myvideo                       # just the instrument
+shardloom render myvideo                     # into myvideo/renders/, at the project's format
+shardloom render myvideo --format youtube-1080 --quality best -o out.mp4
 
-shardloom slice myvideo more.mp4 --count 16   # add shards
-shardloom analyse myvideo --music other.mp3   # change song
+shardloom pack myvideo                       # myvideo.zip: the project and its media
+shardloom unpack myvideo.zip                 # unpack it and rebuild the shards
+shardloom build myvideo                      # rebuild whatever is missing or out of date
 shardloom info myvideo
 ```
 
-A project is a folder: `project.json` (patterns, lanes, links, recorded moves), `pool/` (the shards as frames) and `analysis.*` (the song's beats and curves).
-
 ## How it works
 
-**Shards.** Each video is cut at random places into pieces between `--min` and `--max` seconds, without overlap, scaled and cropped to the project size. Each shard gets an *energy* score (how much moves in it), ranked across the pool from 0 (calmest) to 1 (busiest).
+**Shards.** Each video is cut at random places into pieces between the shortest and longest length, without overlap, scaled and cropped to the output's shape. If you change the shape afterwards, shards are cropped to fit until you cut them again. Each shard gets an *energy* score (how much moves in it), ranked across the pool from 0 (calmest) to 1 (busiest).
 
 **The sequencer.** Lanes are layers, blended over each other (normal, add, screen, multiply, difference). Each step has:
 - an on/off switch and a *chance* of firing
@@ -74,11 +103,11 @@ Patterns can be chained into a song, or switched live.
 | Tab | hide the controls (output only) |
 | Ctrl+S | save (also saved on exit) |
 
-Recorded moves play back, and export, until you clear them.
+Recorded moves play back, and export, until you clear them. In the editor these keys work in the Perform workspace. In Edit, Space plays the preview, ← → move 5 seconds and Home goes to the start.
 
 ## Inspiration
 
-Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/sxrvys/Abjext), a Mac video editor and performance instrument that sequences footage like samples, with probability, per-step effects and music-driven visuals. ABJEXT's source isn't public, so Shardloom is an independent program written from scratch for Linux. It shares no code with ABJEXT and isn't affiliated with it.
+Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/sxrvys/Abjext), a Mac video editor and performance instrument that sequences footage like samples, with probability, per-step effects and music-driven visuals. ABJEXT's source isn't public, so Shardloom is an independent program written from scratch. It shares no code with ABJEXT and isn't affiliated with it.
 
 ## Tests
 
@@ -86,7 +115,7 @@ Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/
 .venv/bin/python -m pytest
 ```
 
-The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` with PyInstaller (`packaging/shardloom.spec`), and smoke-tests it.
+The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` with PyInstaller (`packaging/shardloom.spec`), and smoke-tests it: it makes a project, renders it, and opens both editor workspaces.
 
 ## License
 

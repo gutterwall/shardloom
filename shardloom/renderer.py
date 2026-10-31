@@ -64,12 +64,19 @@ class Renderer:
             self._uploaded.append(None)
         return self.inputs[lane]
 
+    def _crop(self, source: moderngl.Texture) -> tuple[float, float]:
+        """Scale of the source's texture coordinates so it covers the output without stretching."""
+        src = source.width / source.height
+        out = self.width / self.height
+        return (out / src, 1.0) if out < src else (1.0, src / out)
+
     def _effects(self, source: moderngl.Texture, fbo: moderngl.Framebuffer, amounts: dict, state: FrameState,
                  flip: bool, seed: float) -> None:
         prog = self.effects
         fbo.use()
         source.use(0)
         prog["tex"].value = 0
+        prog["crop"].value = self._crop(source)
         prog["res"].value = (float(self.width), float(self.height))
         prog["time"].value = float(state.t)
         prog["seed"].value = float(seed)
