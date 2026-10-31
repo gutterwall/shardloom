@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import moderngl
 
@@ -11,8 +13,14 @@ from .sequencer import FrameState
 
 
 def headless_context() -> moderngl.Context:
-    """An offscreen OpenGL 3.3 context (EGL), for export and tests."""
-    return moderngl.create_standalone_context(require=330, backend="egl")
+    """An offscreen OpenGL 3.3 context, for export and tests: EGL on Linux (no display needed),
+    the platform default elsewhere."""
+    if sys.platform.startswith("linux"):
+        try:
+            return moderngl.create_standalone_context(require=330, backend="egl")
+        except Exception:
+            pass
+    return moderngl.create_standalone_context(require=330)
 
 
 class Renderer:
