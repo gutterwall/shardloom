@@ -119,6 +119,7 @@ class Editor:
     def __init__(self, folder: str | None = None, layout: str = "Edit"):
         self.start_folder = folder
         self.start_layout = layout
+        library.projects_folder()
         self.dir: Path | None = None
         self.project: Project | None = None
         self.session = None
@@ -194,8 +195,12 @@ class Editor:
             self.say(f"{folder} already holds a project; opening it.")
             self.open_project(folder)
             return
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.say(f"Can't make the project folder {folder}: {e}", 10.0)
+            return
         self.close_project()
-        folder.mkdir(parents=True, exist_ok=True)
         seed = random.randint(1, 99999)
         p = starter_project("", library.POOL, 3, seed)
         p.cut["seed"] = seed
@@ -473,10 +478,10 @@ class Editor:
         self.dialog_kind = kind
         home = str(Path.home())
         if kind == "new":
-            self.dialog = pfd.save_file("New project: name its folder", str(Path.home() / "Shardloom" / "My video"),
+            self.dialog = pfd.save_file("New project: name its folder", str(library.projects_folder() / "My video"),
                                         ["Shardloom project folder", "*"], pfd.opt.force_overwrite)
         elif kind == "open":
-            self.dialog = pfd.select_folder("Open a Shardloom project", str(Path.home() / "Shardloom"))
+            self.dialog = pfd.select_folder("Open a Shardloom project", str(library.projects_folder()))
         elif kind == "open_zip":
             self.dialog = pfd.open_file("Open a packed Shardloom project", home, ZIP)
         elif kind == "save_as":

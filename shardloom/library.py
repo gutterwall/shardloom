@@ -37,6 +37,16 @@ MUSIC_EXT = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".aif", "
 MOTIONS = ["still", "zoom_in", "zoom_out", "pan", "random"]
 
 
+def projects_folder() -> Path:
+    """~/Shardloom, where new projects go by default; made if it is missing (checked every time it is asked for)."""
+    folder = Path.home() / "Shardloom"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return Path.home()      # can't make it: start the dialogs in the home folder instead
+    return folder
+
+
 def kind_of(path: str | os.PathLike) -> str | None:
     ext = Path(path).suffix.lower()
     return "video" if ext in VIDEO_EXT else "photo" if ext in PHOTO_EXT else "music" if ext in MUSIC_EXT else None

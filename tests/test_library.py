@@ -174,6 +174,13 @@ def test_project_file_round_trip_keeps_editor_fields(tmp_path):
     assert old.sources == [] and old.output["format"] == "youtube-1080"
 
 
+def test_projects_folder_is_made_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(library.Path, "home", classmethod(lambda cls: tmp_path))
+    assert library.projects_folder() == tmp_path / "Shardloom" and (tmp_path / "Shardloom").is_dir()
+    (tmp_path / "Shardloom").rmdir()                    # deleted while the program runs: made again
+    assert library.projects_folder().is_dir()
+
+
 def test_formats():
     assert formats.BY_KEY["youtube-1080"].width == 1920
     assert (formats.BY_KEY["instagram-reel"].width, formats.BY_KEY["instagram-reel"].height) == (1080, 1920)
