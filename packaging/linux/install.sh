@@ -8,6 +8,10 @@ opt="$HOME/.local/opt/Shardloom"
 bin="$HOME/.local/bin"
 apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 
+if [ "$here" = "$opt" ] && [ "$1" != "--remove" ]; then
+    echo "Run install.sh from the unpacked download, not from $opt." >&2
+    exit 1
+fi
 rm -rf "$opt"
 rm -f "$bin/shardloom" "$apps/shardloom.desktop"
 if [ "$1" = "--remove" ]; then
