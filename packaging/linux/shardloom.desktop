@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Shardloom
+GenericName=Video editor
+Comment=Cut videos and photos into shards and play them to music
+Exec=@EXEC@ %f
+Icon=applications-multimedia
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;

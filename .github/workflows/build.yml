@@ -24,6 +24,58 @@ jobs:
       - run: pip install -e '.[test]'
       - run: python -m pytest -v
 
+  linux-build:
+    name: Build (Linux)
+    # The oldest supported runner, so the bundle runs on glibc 2.35 and newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Software OpenGL and a virtual display for the smoke run
+        run: sudo apt-get update -q && sudo apt-get install -yq libegl1 libgl1-mesa-dri libgles2 libglx-mesa0 xvfb xauth
+      - run: pip install -e . pyinstaller
+      - name: Build the bundle
+        working-directory: packaging
+        run: pyinstaller --noconfirm --clean --distpath ../dist --workpath ../build shardloom.spec
+      - name: Smoke test the built program
+        run: |
+          set -ex
+          python tools/make_test_media.py smoke/media
+          python -c "from PIL import Image; Image.radial_gradient('L').convert('RGB').save('smoke/media/photo.jpg')"
+          cd smoke
+          app=../dist/Shardloom/Shardloom
+          $app --version
+          $app new proj --music media/song.wav --video media/ball.mp4 media/still.mp4 media/photo.jpg --count 12 --seed 1 --format small
+          python -c "from shardloom.sequencer import Project, Title; p = Project.load('proj'); p.titles = [Title('Shardloom', 'smoke test', duration=5)]; p.save('proj')"
+          $app render proj -o out.mp4 --start 8 --end 14
+          python -c "from shardloom.media import probe; i = probe('out.mp4'); print(i); assert i['audio'] and abs(i['duration'] - 6) < 0.2"
+          $app render proj -o reel.mp4 --format instagram-reel --start 8 --end 10 --quality draft
+          python -c "from shardloom.media import probe; i = probe('reel.mp4'); print(i); assert i['video']['width'] == 1080 and i['video']['height'] == 1920"
+          xvfb-run -a -s "-screen 0 1440x900x24" $app edit proj --screenshot editor.png --after 3
+          test -f editor.png
+          xvfb-run -a -s "-screen 0 1440x900x24" $app edit proj --layout Perform --screenshot perform.png --after 3
+          test -f perform.png
+          $app pack proj -o proj.zip
+          $app unpack proj.zip unpacked
+          test -f unpacked/pool/pool.json
+      - uses: actions/upload-artifact@v5
+        with:
+          name: smoke-test-linux
+          path: |
+            smoke/editor.png
+            smoke/perform.png
+      - name: Archive
+        run: |
+          version=$(python -c "import shardloom; print(shardloom.__version__)")
+          cp README.md LICENSE packaging/linux/install.sh packaging/linux/shardloom.desktop dist/Shardloom/
+          tar czf "Shardloom-$version-linux-x64.tar.gz" -C dist Shardloom
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Shardloom-linux-x64
+          path: Shardloom-*-linux-x64.tar.gz
+
   windows:
     name: Tests and build (Windows)
     runs-on: windows-2025
@@ -99,7 +151,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, linux-build, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -107,10 +159,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v6
         with:
-          name: Shardloom-windows-x64
+          pattern: Shardloom-*
+          merge-multiple: true
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" Shardloom-*-windows-x64.zip \
+          gh release create "$GITHUB_REF_NAME" Shardloom-*-windows-x64.zip Shardloom-*-linux-x64.tar.gz \
             --title "Shardloom ${GITHUB_REF_NAME#v}" --notes-file .github/release-notes.md

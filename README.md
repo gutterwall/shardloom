@@ -6,7 +6,16 @@ A step-sequenced video instrument and editor for Linux and Windows. Shardloom cu
 
 **Windows:** download `Shardloom-…-windows-x64.zip` from [Releases](https://github.com/gutterwall/shardloom/releases), unzip it, and double-click `Shardloom.exe`.
 
-**Linux** (or Windows with Python 3.11+): everything installs with pip. Video goes through FFmpeg (PyAV) and sound through miniaudio, and you need OpenGL 3.3.
+**Linux:** download `Shardloom-…-linux-x64.tar.gz` from [Releases](https://github.com/gutterwall/shardloom/releases), then:
+
+```sh
+tar xzf Shardloom-*-linux-x64.tar.gz
+Shardloom/install.sh        # into ~/.local, with a menu entry and the `shardloom` command
+```
+
+Built on Ubuntu 22.04, so it runs on that and newer distributions (glibc 2.35+). `Shardloom/install.sh --remove` uninstalls it.
+
+**From source** (Linux, or Windows with Python 3.11+): everything installs with pip. Video goes through FFmpeg (PyAV) and sound through miniaudio, and you need OpenGL 3.3.
 
 ```sh
 python3 -m venv .venv
@@ -115,7 +124,7 @@ Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/
 .venv/bin/python -m pytest
 ```
 
-The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` with PyInstaller (`packaging/shardloom.spec`), and smoke-tests it: it makes a project, renders it, and opens both editor workspaces.
+The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` and the Linux bundle with PyInstaller (`packaging/shardloom.spec`), and smoke-tests both: it makes a project, renders it, and opens both editor workspaces.
 
 ## License
 

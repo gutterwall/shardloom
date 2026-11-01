@@ -23,7 +23,14 @@ Projects from 0.2 open in the editor. Their media is copied into the project the
 
 ## Linux
 
-```sh
-pip install git+https://github.com/gutterwall/shardloom
-shardloom
-```
+1. Download `Shardloom-…-linux-x64.tar.gz` below.
+2. Unpack it and run the installer:
+   ```sh
+   tar xzf Shardloom-*-linux-x64.tar.gz
+   Shardloom/install.sh
+   ```
+3. Start **Shardloom** from the applications menu, or type `shardloom`.
+
+It installs into `~/.local` for your user only (`install.sh --remove` uninstalls it). Needs a 64-bit distribution from 2022 or later (glibc 2.35, e.g. Ubuntu 22.04, Fedora 36, Debian 12) and OpenGL 3.3.
+
+Or from source: `pip install git+https://github.com/gutterwall/shardloom`
