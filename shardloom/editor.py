@@ -28,6 +28,7 @@ from imgui_bundle import hello_imgui, imgui, immapp
 from imgui_bundle import portable_file_dialogs as pfd
 
 from . import events, formats, library
+from . import pace as pacelib
 from .compose import Composer, Program
 from .media import AudioPlayer, MediaError, decode_audio
 from .sequencer import Project, Title, project_path, starter_project
@@ -1551,6 +1552,92 @@ class Editor:
                 self.play()
         self.player.engine.events.fire(name, t)
 
+    # ---- shard timing --------------------------------------------------------
+
+    def shard_timing_window(self) -> None:
+        if not self.need_project():
+            return
+        p = self.project
+        pace = pacelib.settings(p)
+        _, pace["on"] = imgui.checkbox("Hold shards for beats at a time", bool(pace["on"]))
+        imgui.push_style_color(imgui.Col_.text, imgui.get_style_color_vec4(imgui.Col_.text_disabled))
+        imgui.text_wrapped("Instead of the sequencer's cuts, each layer holds one shard and plays it "
+                           "over and over, then moves on.")
+        imgui.pop_style_color()
+        if not pace["on"]:
+            imgui.begin_disabled()
+        imgui.separator_text("Speed of change")
+        w = imgui.get_content_region_avail().x * 0.6
+        imgui.set_next_item_width(w)
+        tilt = float(pace["tilt"])
+        _, pace["tilt"] = imgui.slider_float("speed", tilt, -1.0, 1.0, "faster" if tilt < -0.05 else "slower"
+                                             if tilt > 0.05 else "as weighted")
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("Leans every length below towards shorter (left) or longer (right).")
+        imgui.set_next_item_width(w)
+        _, pace["repeats"] = imgui.slider_int("plays of each shard", int(pace["repeats"]), 1, 16)
+        imgui.set_next_item_width(w)
+        _, pace["intensity"] = imgui.slider_float("faster when intense", float(pace["intensity"]), 0.0, 1.0, "%.2f")
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("When the music gets more intense, shorter lengths come up more often\n"
+                              "(and in calm parts, longer ones).")
+
+        intensity = 0.5
+        g = None
+        if self.player:
+            e = self.player.engine
+            t = self.player.t if self.mode == "Perform" else self.program().song_time(self.T)
+            if t is not None:
+                intensity = e.analysis.at(t).get("intensity", 0.5)
+                g = e.step_at(t)
+        now = pacelib.shares(pace, intensity)
+        imgui.separator_text("Lengths")
+        imgui.push_style_color(imgui.Col_.text, imgui.get_style_color_vec4(imgui.Col_.text_disabled))
+        imgui.text_wrapped(f"Weights, and the chance of each right now (music intensity {intensity:.2f})")
+        imgui.pop_style_color()
+        weights = list(pace["weights"])
+        for i, label in enumerate(pacelib.LABELS):
+            imgui.set_next_item_width(w)
+            _, weights[i] = imgui.slider_float(f"##w{i}", float(weights[i]), 0.0, 1.0,
+                                               f"{label}: off" if weights[i] <= 0 else f"{label}: %.2f")
+            imgui.same_line()
+            pos = imgui.get_cursor_screen_pos()
+            bar = imgui.get_content_region_avail().x
+            h = imgui.get_frame_height()
+            dl = imgui.get_window_draw_list()
+            dl.add_rect_filled(pos, V2(pos.x + bar, pos.y + h), imgui.get_color_u32(imgui.Col_.frame_bg))
+            dl.add_rect_filled(pos, V2(pos.x + bar * now[i], pos.y + h), imgui.get_color_u32(imgui.Col_.plot_histogram))
+            if now[i] > 0:
+                dl.add_text(V2(pos.x + 4, pos.y + imgui.get_style().frame_padding.y), imgui.get_color_u32(imgui.Col_.text),
+                            f"{now[i] * 100:.0f}%")
+            imgui.dummy(V2(bar, h))
+        pace["weights"] = [round(float(x), 3) for x in weights]
+        if imgui.button("Surprise me##pace"):
+            rng = random.Random()
+            pace["weights"] = [round(rng.choice([0.0, 0.0, rng.uniform(0.2, 1.0)]), 2) for _ in pacelib.LENGTHS]
+            if not any(pace["weights"]):
+                pace["weights"][rng.randrange(2, 5)] = 1.0
+            pace["tilt"] = round(rng.uniform(-0.6, 0.6), 2)
+            pace["repeats"] = rng.choice([1, 2, 4, 4, 4, 8])
+            pace["intensity"] = round(rng.uniform(0.2, 0.9), 2)
+        imgui.same_line()
+        if imgui.button("Reset##pace"):
+            pace = {**pacelib.default_pace(), "on": pace["on"]}
+        if not pace["on"]:
+            imgui.end_disabled()
+        elif g is not None and self.player:
+            imgui.separator_text("Now")
+            e = self.player.engine
+            for li, lane in enumerate(p.lanes):
+                ph = e.phrase(li, g)
+                if ph is None:
+                    continue
+                first, every, plays, shard, beats = ph
+                play = (g - first) // every + 1
+                label = pacelib.LABELS[pacelib.LENGTHS.index(beats)] if beats in pacelib.LENGTHS else f"{beats:g} beats"
+                imgui.text(f"{lane.name}: shard {shard}, {label}, play {min(play, plays)} of {plays}")
+        p.pace = pace
+
     # ---- the instrument's windows ------------------------------------------
 
     def player_window(self, name: str) -> None:
@@ -1602,6 +1689,7 @@ def layouts(editor: Editor) -> tuple[hello_imgui.DockingParams, hello_imgui.Dock
         _window("Timeline", "Bottom", editor.timeline_window),
         _window("Video settings", "Right", editor.settings_window),
         _window("Shard effects", "Right", editor.shard_fx_window),
+        _window("Shard timing", "Right", editor.shard_timing_window),
     ]
     edit.layout_condition = hello_imgui.DockingLayoutCondition.application_start
 
@@ -1616,7 +1704,8 @@ def layouts(editor: Editor) -> tuple[hello_imgui.DockingParams, hello_imgui.Dock
     dock = {"Output": "MainDockSpace", "Transport": "PRight", "Edit": "PRightBottom", "Sequencer": "PBottom",
             "Music": "PBottom", "Pool": "PLeft"}
     perform.dockable_windows = [_window(n, dock[n], lambda n=n: editor.player_window(n), False) for n in PLAYER_WINDOWS] + [
-        _window("Shard effects##perform", "PRightBottom", editor.shard_fx_window)]
+        _window("Shard effects##perform", "PRightBottom", editor.shard_fx_window),
+        _window("Shard timing##perform", "PRightBottom", editor.shard_timing_window)]
     perform.layout_condition = hello_imgui.DockingLayoutCondition.application_start
     return edit, perform
 

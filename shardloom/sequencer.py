@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import fx as fxlib
+from . import pace as pacelib
 from .events import Scheduler
 
 CHOICES = ["random", "bag", "no_repeat", "intensity"]
@@ -138,6 +139,8 @@ class Project:
     output: dict = field(default_factory=default_output)
     # Shard effects (events.EVENTS): {"fireworks": {"rate": 0.3, "sync": 1.0, "strength": 0.8}, ...}
     shard_fx: dict[str, dict] = field(default_factory=dict)
+    # Shard timing (pace.py): hold each layer on a shard for beats at a time instead of the sequencer's cuts.
+    pace: dict = field(default_factory=pacelib.default_pace)
 
     # ---- files ---------------------------------------------------------
 
@@ -330,6 +333,9 @@ class Engine:
         self._bag_round: dict[int, int] = {}
         self._last: dict[int, int] = {}
         self._pattern_at: dict[int, int] = {}
+        # Shard timing: per lane, the phrases so far as (first step, steps per play, plays, shard, beats).
+        self._phrases: dict[int, list[tuple[int, int, int, int, float]]] = {}
+        self._pace_key = None
         self._live_pattern_run = self.live_pattern
 
     def beats(self, t: float) -> float:
@@ -437,6 +443,10 @@ class Engine:
                 self.queued_pattern = None
         pi, si = self.pattern_for_step(g)
         self._pattern_at[g] = pi
+        pace = pacelib.settings(p)
+        if pace["on"]:
+            self._paced(g, pace)
+            return
         if not p.patterns:
             return
         pattern = p.patterns[pi]
@@ -461,6 +471,57 @@ class Engine:
             voices = self._voices[li]
             voices.append(voice)
             # Only the newest few can still be sounding.
+            del voices[:-4]
+
+    # ---- shard timing ----------------------------------------------------
+
+    def phrase(self, li: int, g: int, pace: dict | None = None) -> tuple[int, int, int, int, float] | None:
+        """The phrase lane li is playing at step g: (first step, steps per play, plays, shard, beats)."""
+        p = self.project
+        pace = pace or pacelib.settings(p)
+        if li >= len(p.lanes) or not self.shards or g < 0:
+            return None
+        key = (repr(pace), p.steps_per_beat, p.seed)
+        if key != self._pace_key:
+            # Changed while playing: carry on from here with the new timing.
+            self._phrases = {}
+            self._pace_key = key
+        phrases = self._phrases.setdefault(li, [])
+        if phrases and g < phrases[0][0]:
+            return None             # long gone (advance() starts again from the top when time goes back)
+        # Phrases count from the start of the song, so a render from any point lands on the same ones.
+        start = phrases[-1][0] + phrases[-1][1] * phrases[-1][2] if phrases else 0
+        while not phrases or g >= phrases[-1][0] + phrases[-1][1] * phrases[-1][2]:
+            t = self.time_of_step(start)
+            intensity = self.analysis.at(max(0.0, t)).get("intensity", 0.5)
+            beats = pacelib.pick(pace, intensity, rand(p.seed, start, li, 61))
+            every = max(1, int(round(beats * p.steps_per_beat)))
+            plays = max(1, int(pace["repeats"]))
+            shard = self._choose(li, p.lanes[li], Step(), start, t)
+            self._last[li] = shard
+            phrases.append((start, every, plays, shard, beats))
+            del phrases[:-64]
+            start += every * plays
+        for ph in reversed(phrases):
+            if ph[0] <= g:
+                return ph
+        return phrases[0]
+
+    def _paced(self, g: int, pace: dict) -> None:
+        p = self.project
+        t = self.time_of_step(g)
+        for li, lane in enumerate(p.lanes):
+            ph = self.phrase(li, g, pace)
+            if ph is None:
+                continue
+            first, every, _, shard, _ = ph
+            if (g - first) % every:
+                continue
+            length = self.lengths.get(shard, 1)
+            # Every play of a phrase starts on the same frame, so it repeats.
+            start = int(rand(p.seed, first, li, 5) * length) % max(1, length)
+            voices = self._voices[li]
+            voices.append(Voice(li, g, shard, t, self.time_of_step(g + every), 1.0, False, start, {}))
             del voices[:-4]
 
     def advance(self, t: float) -> int:

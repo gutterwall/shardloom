@@ -95,3 +95,36 @@ def test_every_effect_changes_the_picture(ctx):  # noqa: F811
         img = picture({name: (1.0, 0.4, 0.37)})
         assert np.abs(img - plain).mean() > 2.0, name
     assert np.array_equal(picture({"tear": (0.0, 0.4, 0.37)}), plain)   # struck with no strength: untouched
+
+
+def test_colour_effects_follow_the_music_and_join_up():
+    e = engine({"hue_shift": {"rate": 1.0, "strength": 1.0}, "brightness": {"rate": 1.0, "strength": 1.0}})
+    amounts, levels = [], []
+    for i in range(1, 300):
+        t = i / 30
+        ev = e.state(t).events
+        if e.analysis.at(t)["intensity"] > 0.02:
+            assert "hue_shift" in ev                               # at full rate, on all the time
+        amounts.append(ev.get("brightness", (0.0,))[0])
+        levels.append(e.analysis.at(t)["level"])
+        assert 0.0 <= ev.get("hue_shift", (0.0,))[0] <= 1.0
+    amounts, levels = np.array(amounts), np.array(levels)
+    assert np.corrcoef(amounts, levels)[0, 1] > 0.9                # louder: brighter
+    assert amounts.min() < 0.0 < amounts.max()                     # quiet parts go darker
+    seeds = {hit[2] for t in np.arange(0.5, 10.0, 0.5) if (hit := e.state(t).events.get("hue_shift"))}
+    assert len(seeds) == 1                                         # one direction round the wheel all song
+
+
+def test_negative_brightness_darkens(ctx):  # noqa: F811
+    from shardloom.renderer import Renderer
+
+    r = Renderer(ctx, W, H, Frames())
+    voice = Voice(0, 0, 0, 0.0, 99.0, 1.0, False, 0, {})
+
+    def mean(hits):
+        st = FrameState(0.5, 0, 0, [LaneState(voice, 0, {}, 1.0, "normal")], {}, ["#000000", "#808080", "#ffffff"], {}, hits)
+        r.render(st)
+        return r.read().mean()
+
+    plain = mean({})
+    assert mean({"brightness": (-0.8, 0.1, 0.5)}) < plain * 0.6 < plain < mean({"brightness": (0.8, 0.1, 0.5)})

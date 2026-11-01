@@ -101,9 +101,12 @@ class Renderer:
         prog["res"].value = (float(self.width), float(self.height))
         prog["time"].value = float(state.t)
         hits = [state.events.get(name, (0.0, 0.0, 0.0)) for name in eventlib.NAMES]
-        prog["amt"].value = [float(h[0]) for h in hits]
-        prog["age"].value = [float(h[1]) for h in hits]
-        prog["sd"].value = [float(h[2]) for h in hits]
+        for k, name in enumerate(("amt", "age", "sd")):
+            # Drivers may drop the end of an array the shader never reads, so write only what is there.
+            u = prog.get(name, None)
+            if u is not None:
+                vals = [float(h[k]) for h in hits][:u.array_length]
+                u.value = vals if len(vals) > 1 else vals[0]
         self.vao["events"].render(moderngl.TRIANGLE_STRIP)
 
     # ---- drawing -------------------------------------------------------

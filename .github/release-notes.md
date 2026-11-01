@@ -10,7 +10,17 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: shard effects
+## New in this version
+
+### Shard timing
+
+A **Shard timing** panel holds each layer on one shard for beats at a time instead of cutting on every step: it plays the shard over and over (4 times by default) for a length of ¼, ½, 1, 2, 4, 6 or 8 beats, then moves on. Weight the lengths, lean the overall speed faster or slower, and let intense parts of the song change shards more often.
+
+### Colour that follows the music
+
+Three more shard effects, in a **Colour** group: **hue shift** turns the colours round the wheel as the music gets more intense, **brightness** goes up when it's loud and down when it's quiet, and **saturation** gets richer when it's intense and greyer when it's calm. They have the same sliders (how often, pulse, strength), the **try** button, and **Surprise me** can pick them. At full rate they're on all the time.
+
+## Shard effects (0.4)
 
 A **Shard effects** panel with 13 effects that strike across the picture: datamosh, pixel sort, corruption and slice tears; VHS tracking, CRT, vertical roll and chroma bleed; film burns, light leaks and film damage; fireworks and explosions. Each has a slider for how often it strikes, whether it lands on the pulse (the beats and hits) or between, and its strength. **try** sets one off in the preview.
 

@@ -171,21 +171,22 @@ void main() {
 """
 
 # The shard effects (events.EVENTS), on the whole picture after the lanes are mixed.
-# For effect i: amt[i] how hard it hits now (0 = off), age[i] 0..1 through the strike, sd[i] its random seed.
+# For effect i: amt[i] how hard it hits now (0 = off; the Colour ones -1..1), age[i] 0..1 through the strike,
+# sd[i] its random seed.
 EVENTS = """
 #version 330
 uniform sampler2D tex;       // the picture so far
 uniform sampler2D prev;      // the last finished frame, for datamosh
 uniform vec2 res;
 uniform float time;
-uniform float amt[13];
-uniform float age[13];
-uniform float sd[13];
+uniform float amt[16];
+uniform float age[16];
+uniform float sd[16];
 in vec2 uv;
 out vec4 color;
 
 const int DATAMOSH = 0, PIXEL_SORT = 1, CORRUPT = 2, TEAR = 3, VHS = 4, CRT = 5, ROLL = 6, BLEED = 7,
-          BURN = 8, LEAK = 9, DAMAGE = 10, FIREWORKS = 11, EXPLOSION = 12;
+          BURN = 8, LEAK = 9, DAMAGE = 10, FIREWORKS = 11, EXPLOSION = 12, HUE = 13, BRIGHT = 14, SAT = 15;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float hash1(float x) { return fract(sin(x * 91.3458 + 3.17) * 47453.5453); }
@@ -210,6 +211,15 @@ vec3 screen(vec3 a, vec3 b) { return 1.0 - (1.0 - a) * (1.0 - b); }
 vec3 fire(float h) {
     h = clamp(h, 0.0, 1.0);
     return vec3(smoothstep(0.0, 0.35, h), smoothstep(0.25, 0.7, h), smoothstep(0.6, 1.0, h));
+}
+
+vec3 hue_rotate(vec3 c, float a) {
+    const mat3 toYIQ = mat3(0.299, 0.596, 0.211, 0.587, -0.274, -0.523, 0.114, -0.322, 0.312);
+    const mat3 toRGB = mat3(1.0, 1.0, 1.0, 0.956, -0.272, -1.106, 0.621, -0.647, 1.703);
+    vec3 yiq = toYIQ * c;
+    float h = atan(yiq.z, yiq.y) + a;
+    float chroma = length(yiq.yz);
+    return toRGB * vec3(yiq.x, chroma * cos(h), chroma * sin(h));
 }
 
 vec3 hsv(float h, float s, float v) {
@@ -367,6 +377,14 @@ void main() {
             else c = src((blk + vec2(floor(hash(blk + 1.0) * 6.0) - 3.0, 0.0)) * size / res + fract(p * res / size) * size / res);
         }
     }
+
+    // ---- colour, following the music ----
+    a = amt[HUE];
+    if (a != 0.0) c = hue_rotate(c, a * 3.14159 * (sd[HUE] < 0.5 ? -1.0 : 1.0));   // up to half way round
+    a = amt[SAT];
+    if (a != 0.0) c = mix(vec3(luma(c)), c, max(0.0, 1.0 + 1.5 * a));
+    a = amt[BRIGHT];
+    if (a != 0.0) c = a > 0.0 ? screen(c * (1.0 + 0.6 * a), c * 0.5 * a) : c * (1.0 + 0.6 * a);
 
     // ---- light and dirt ----
     a = amt[VHS];

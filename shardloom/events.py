@@ -1,5 +1,8 @@
 """Shard effects: glitches, analog faults, film burns, fireworks and explosions that strike now and then.
 
+The Colour ones follow the music: how far they push the picture is the song's intensity or level
+at that moment, and their strikes join up into one stretch when they come close together.
+
 Each one has three settings, kept in Project.shard_fx[name]:
   rate      0..1   how often it strikes
   sync     -1..1   -1 between the pulses, 0 anywhere, +1 on the pulses (the beats and the hits)
@@ -23,6 +26,9 @@ class Event:
     about: str
     seconds: float      # how long one strike lasts
     envelope: str       # "spike": hits then fades; "swell": rises and falls; "flat": holds then fades
+    follows: str = ""   # a music curve (analysis) that sets how far it goes; "" for a fixed strike
+    both_ways: bool = False   # follows the curve both ways from its middle (quiet: less, loud: more)
+    peak: float = 0.4   # the chance of a strike on a step at full rate with no pulse preference
 
 
 EVENTS = {
@@ -39,12 +45,15 @@ EVENTS = {
     "damage": Event("Film damage", "Film", "Scratches, dust, weave and flicker", 1.2, "flat"),
     "fireworks": Event("Fireworks", "Pyrotechnics", "Bursts of sparks that fall and fade", 2.2, "flat"),
     "explosion": Event("Explosion", "Pyrotechnics", "A fireball, shockwave, flash and shake", 1.4, "flat"),
+    "hue_shift": Event("Hue shift", "Colour", "Turns the colours round the wheel, further when the music is intense",
+                       0.4, "flat", "intensity", peak=1.0),
+    "brightness": Event("Brightness", "Colour", "Brighter when the music is loud, darker when it is quiet",
+                        0.4, "flat", "level", True, peak=1.0),
+    "saturation": Event("Saturation", "Colour", "Richer colour when the music is intense, greyer when it is calm",
+                        0.4, "flat", "intensity", True, peak=1.0),
 }
 NAMES = list(EVENTS)
-GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics"]
-
-# Chance of a strike on a step at full rate with no pulse preference.
-PEAK = 0.4
+GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour"]
 
 
 def default_setting() -> dict:
@@ -66,10 +75,10 @@ def envelope(kind: str, age: float) -> float:
     return min(1.0, age / 0.04, (1.0 - age) / 0.15)
 
 
-def chance(rate: float, sync: float, pulse: float) -> float:
+def chance(rate: float, sync: float, pulse: float, peak: float = 0.4) -> float:
     """The chance of a strike on a step with this pulse (0 between the beats .. 1 on a strong beat)."""
     weight = 1.0 + sync * (2.0 * pulse - 1.0)
-    return max(0.0, min(1.0, PEAK * rate ** 1.5 * weight))
+    return max(0.0, min(1.0, peak * rate ** 1.5 * weight))
 
 
 class Scheduler:
@@ -101,12 +110,15 @@ class Scheduler:
         self.manual[name] = t
 
     def at(self, t: float) -> dict[str, tuple[float, float, float]]:
-        """name -> (amount, age 0..1, seed 0..1) for each effect striking at t."""
+        """name -> (amount, age 0..1, seed 0..1) for each effect striking at t.
+
+        The amount of a Colour effect runs -1..1 for one that follows the music both ways."""
         from .sequencer import rand
 
         e = self.engine
         p = e.project
         out = {}
+        music = None
         now = e.step_at(t)
         for i, name in enumerate(NAMES):
             ev = EVENTS[name]
@@ -115,15 +127,19 @@ class Scheduler:
             if strength <= 0.0:
                 continue
             hit = None
+            held = 0.0          # Colour effects: the strongest of the strikes still going, so they join up
             if s["rate"] > 0.0:
                 g = now
                 while g >= 0:
                     t0, pulse = self.step(g)
                     if t0 < t - ev.seconds:
                         break
-                    if t0 <= t and rand(p.seed, 7919, i, g) < chance(float(s["rate"]), float(s["sync"]), pulse):
-                        hit = (t0, rand(p.seed, 104729, i, g))
-                        break
+                    if t0 <= t and rand(p.seed, 7919, i, g) < chance(float(s["rate"]), float(s["sync"]), pulse, ev.peak):
+                        if hit is None:
+                            hit = (t0, rand(p.seed, 104729, i, g))
+                        if not ev.follows:
+                            break
+                        held = max(held, envelope(ev.envelope, (t - t0) / ev.seconds))
                     g -= 1
             by_hand = self.manual.get(name)
             if by_hand is not None and by_hand <= t < by_hand + ev.seconds and (hit is None or by_hand > hit[0]):
@@ -131,7 +147,13 @@ class Scheduler:
             if hit is None:
                 continue
             age = (t - hit[0]) / ev.seconds
-            amount = strength * envelope(ev.envelope, age)
-            if amount > 0.0:
+            amount = strength * max(held, envelope(ev.envelope, age))
+            if ev.follows:
+                if music is None:
+                    music = e.analysis.at(max(0.0, t))
+                level = min(1.0, max(0.0, music.get(ev.follows, 0.0)))
+                amount *= 2.0 * level - 1.0 if ev.both_ways else level
+                hit = (hit[0], rand(p.seed, 104729, i))     # the same direction all through the song
+            if amount != 0.0:
                 out[name] = (amount, age, hit[1])
         return out

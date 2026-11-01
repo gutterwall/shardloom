@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shardloom"
-version = "0.4.0"
+version = "0.5.0"
 description = "A step-sequenced video instrument and editor: random shards of footage and photos, probability steps, music-driven colour and effects, titles, YouTube and Instagram sizes."
 readme = "README.md"
 requires-python = ">=3.11"

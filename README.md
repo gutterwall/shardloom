@@ -40,8 +40,10 @@ Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a n
   - **Analog:** VHS tracking, CRT, vertical roll, chroma bleed.
   - **Film:** film burn, light leak, film damage (scratches, dust, weave, flicker).
   - **Pyrotechnics:** fireworks, explosion (fireball, shockwave, flash and shake).
+  - **Colour**, following the music: hue shift (further round the colour wheel when the song is intense), brightness (brighter when loud, darker when quiet) and saturation (richer when intense, greyer when calm). At full **how often** they're on all the time; lower, they come and go with the pulse setting.
 
   Each has three sliders: **how often** it strikes, **pulse** (left: between the beats, middle: anywhere, right: on the beats and hits) and **strength**. **try** sets one off in the preview now. Strikes follow the project's seed, so a render matches the preview every time.
+- **Shard timing:** hold each layer on one shard for beats at a time instead of cutting on every sequencer step. Each layer plays a shard for a length (¼, ½, 1, 2, 4, 6 or 8 beats, picked by your weights), from the same frame **plays of each shard** times over (4 by default), then moves on to a new shard and length. **Speed** leans every length shorter or longer, and **faster when intense** makes the intense parts of the song change shards more often (and the calm parts less). The panel shows each length's chance right now and what each layer is playing.
 
 **Perform:** the instrument (sequencer, step editor, pool and music links), described below.
 
