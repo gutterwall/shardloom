@@ -1,5 +1,6 @@
 import json
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -149,7 +150,7 @@ def test_old_projects_adopt_their_pool_sources(tmp_path, videos):
     slice_videos([videos["ball"], videos["still"]], d / "pool", count=4, width=32, height=18, seed=1)
     p = Project()
     library.adopt_pool_sources(p, d)
-    assert sorted(s.path.split("/")[-1] for s in p.sources) == ["ball.mp4", "still.mp4"]
+    assert sorted(Path(s.path).name for s in p.sources) == ["ball.mp4", "still.mp4"]
     assert [s.id for s in p.sources] == ["s1", "s2"]
 
 

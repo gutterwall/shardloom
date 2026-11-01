@@ -35,7 +35,7 @@ jobs:
           python-version: "3.13"
       - name: Software OpenGL and a virtual display for the smoke run
         run: sudo apt-get update -q && sudo apt-get install -yq libegl1 libgl1-mesa-dri libgles2 libglx-mesa0 xvfb xauth
-      - run: pip install -e . pyinstaller
+      - run: pip install -e '.[test]' pyinstaller
       - name: Build the bundle
         working-directory: packaging
         run: pyinstaller --noconfirm --clean --distpath ../dist --workpath ../build shardloom.spec
