@@ -7,6 +7,7 @@ import sys
 import numpy as np
 import moderngl
 
+from . import events as eventlib
 from . import fx as fxlib
 from . import shaders
 from .sequencer import FrameState
@@ -33,8 +34,10 @@ class Renderer:
         self.effects = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.EFFECTS)
         self.blend = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.BLEND)
         self.master = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.MASTER)
+        self.events = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.EVENTS)
         self.vao = {name: ctx.vertex_array(prog, [(quad, "2f", "pos")])
-                    for name, prog in (("effects", self.effects), ("blend", self.blend), ("master", self.master))}
+                    for name, prog in (("effects", self.effects), ("blend", self.blend), ("master", self.master),
+                                       ("events", self.events))}
         self._quad = quad
 
         def target():
@@ -45,6 +48,7 @@ class Renderer:
         self.layer = target()          # one lane after its effects
         self.accum = [target(), target()]
         self.mastered = target()       # the blend after the master effects
+        self.struck = target()         # ... and after the shard effects
         self.out = [target(), target()]  # final, ping-pong for trails
         self._out = 0
         self.inputs: list[moderngl.Texture] = []
@@ -87,6 +91,21 @@ class Renderer:
             prog[name].value = float(amounts.get(name, 0.0))
         self.vao["effects"].render(moderngl.TRIANGLE_STRIP)
 
+    def _shard_effects(self, source: moderngl.Texture, previous: moderngl.Texture, state: FrameState) -> None:
+        prog = self.events
+        self.struck[1].use()
+        source.use(0)
+        previous.use(1)
+        prog["tex"].value = 0
+        prog["prev"].value = 1
+        prog["res"].value = (float(self.width), float(self.height))
+        prog["time"].value = float(state.t)
+        hits = [state.events.get(name, (0.0, 0.0, 0.0)) for name in eventlib.NAMES]
+        prog["amt"].value = [float(h[0]) for h in hits]
+        prog["age"].value = [float(h[1]) for h in hits]
+        prog["sd"].value = [float(h[2]) for h in hits]
+        self.vao["events"].render(moderngl.TRIANGLE_STRIP)
+
     # ---- drawing -------------------------------------------------------
 
     def render(self, state: FrameState) -> moderngl.Texture:
@@ -118,10 +137,14 @@ class Renderer:
             a, b = b, a
         self._effects(a[0], self.mastered[1], state.master, state, False, seed=state.step)
         prev = self.out[self._out]
+        picture = self.mastered[0]
+        if state.events:
+            self._shard_effects(picture, prev[0], state)
+            picture = self.struck[0]
         self._out ^= 1
         cur = self.out[self._out]
         cur[1].use()
-        self.mastered[0].use(0)
+        picture.use(0)
         prev[0].use(1)
         m = self.master
         m["current"].value = 0

@@ -35,6 +35,13 @@ Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a n
   - **Format:** YouTube (720p, 1080p, 1440p, 4K, Shorts), Instagram (Reel/Story 9:16, feed 4:5, square, landscape), TikTok or a custom size; frame rate; quality; song section; fade in and out.
   - **Titles:** text and subtitle, at the start or end, over the picture or on their own card before or after the song. Each has a position, size, colour, font, shadow, fade, and a background colour or picture.
   - **Render:** render the current size, or several sizes one after the other into `renders/`.
+- **Shard effects** (beside Video settings, and in Perform too): effects that strike now and then across the whole picture.
+  - **Digital glitch:** datamosh, pixel sort, block corruption, slice tear.
+  - **Analog:** VHS tracking, CRT, vertical roll, chroma bleed.
+  - **Film:** film burn, light leak, film damage (scratches, dust, weave, flicker).
+  - **Pyrotechnics:** fireworks, explosion (fireball, shockwave, flash and shake).
+
+  Each has three sliders: **how often** it strikes, **pulse** (left: between the beats, middle: anywhere, right: on the beats and hits) and **strength**. **try** sets one off in the preview now. Strikes follow the project's seed, so a render matches the preview every time.
 
 **Perform:** the instrument (sequencer, step editor, pool and music links), described below.
 

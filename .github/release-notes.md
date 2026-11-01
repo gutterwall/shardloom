@@ -10,7 +10,11 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: the editor
+## New in this version: shard effects
+
+A **Shard effects** panel with 13 effects that strike across the picture: datamosh, pixel sort, corruption and slice tears; VHS tracking, CRT, vertical roll and chroma bleed; film burns, light leaks and film damage; fireworks and explosions. Each has a slider for how often it strikes, whether it lands on the pulse (the beats and hits) or between, and its strength. **try** sets one off in the preview.
+
+## The editor (0.3)
 
 - **Media:** queue up videos and photos, and choose the song (WAV, MP3, …). For each video, set its share of the cuts, a from/to range and which layers it plays in. Photos become shards: still, zooming or panning.
 - **Formats:** YouTube 720p, 1080p, 1440p, 4K and Shorts; Instagram Reel/Story, feed portrait, square and landscape; TikTok; or a custom size. Frame rate and quality. Render several sizes in one go.

@@ -27,7 +27,7 @@ import numpy as np
 from imgui_bundle import hello_imgui, imgui, immapp
 from imgui_bundle import portable_file_dialogs as pfd
 
-from . import formats, library
+from . import events, formats, library
 from .compose import Composer, Program
 from .media import AudioPlayer, MediaError, decode_audio
 from .sequencer import Project, Title, project_path, starter_project
@@ -1460,6 +1460,97 @@ class Editor:
             out_dir.mkdir(parents=True, exist_ok=True)
             reveal(out_dir)
 
+    # ---- shard effects -------------------------------------------------------
+
+    def shard_fx_window(self) -> None:
+        if not self.need_project():
+            return
+        p = self.project
+        imgui.text_wrapped("Effects that strike now and then. How often, whether they land on the pulses "
+                           "(the beats and hits) or between them, and how hard they hit the picture.")
+        if imgui.button("All off"):
+            p.shard_fx = {}
+        imgui.same_line()
+        if imgui.button("Surprise me"):
+            rng = random.Random()
+            p.shard_fx = {name: {"rate": round(rng.uniform(0.15, 0.5), 2), "sync": rng.choice([-1.0, 0.0, 1.0]),
+                                 "strength": round(rng.uniform(0.5, 1.0), 2)}
+                          for name in rng.sample(events.NAMES, 4)}
+        imgui.same_line()
+        on = sum(1 for n in events.NAMES if events.setting(p, n)["rate"] > 0)
+        imgui.text_disabled(f"{on} on")
+        flags = imgui.TableFlags_.sizing_stretch_prop | imgui.TableFlags_.row_bg | imgui.TableFlags_.pad_outer_x
+        for group in events.GROUPS:
+            imgui.separator_text(group)
+            if not imgui.begin_table(f"shardfx_{group}", 5, flags):
+                continue
+            imgui.table_setup_column("effect", imgui.TableColumnFlags_.width_fixed, 88)
+            imgui.table_setup_column("how often", 0, 1.0)
+            imgui.table_setup_column("pulse", 0, 1.25)
+            imgui.table_setup_column("strength", 0, 1.0)
+            imgui.table_setup_column("", imgui.TableColumnFlags_.width_fixed, 30)
+            if group == events.GROUPS[0]:
+                imgui.table_headers_row()
+            for name in (n for n in events.NAMES if events.EVENTS[n].group == group):
+                self.shard_fx_row(name)
+            imgui.end_table()
+        imgui.spacing()
+        imgui.text_disabled("Strikes fall the same way every time you play or render.")
+
+    def shard_fx_row(self, name: str) -> None:
+        ev = events.EVENTS[name]
+        p = self.project
+        s = events.setting(p, name)
+        imgui.push_id(name)
+        imgui.table_next_row()
+        imgui.table_next_column()
+        imgui.align_text_to_frame_padding()
+        if s["rate"] > 0:
+            imgui.text(ev.label)
+        else:
+            imgui.text_disabled(ev.label)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip(ev.about)
+        imgui.table_next_column()
+        imgui.set_next_item_width(-1)
+        ch1, s["rate"] = imgui.slider_float("##rate", float(s["rate"]), 0.0, 1.0,
+                                            "off" if s["rate"] <= 0 else f"{s['rate'] * 100:.0f}%%")
+        imgui.table_next_column()
+        imgui.set_next_item_width(-1)
+        sync = float(s["sync"])
+        label = ("between" if sync <= -0.95 else "on pulse" if sync >= 0.95 else "any" if abs(sync) < 0.05
+                 else f"{'betw.' if sync < 0 else 'on'} {abs(sync) * 100:.0f}%%")
+        ch2, s["sync"] = imgui.slider_float("##sync", sync, -1.0, 1.0, label)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("Left: strikes between the beats. Middle: anywhere. Right: on the beats and hits.")
+        imgui.table_next_column()
+        imgui.set_next_item_width(-1)
+        ch3, s["strength"] = imgui.slider_float("##strength", float(s["strength"]), 0.0, 1.0, "%.2f")
+        if ch1 or ch2 or ch3:
+            p.shard_fx[name] = {k: round(float(v), 3) for k, v in s.items()}
+        imgui.table_next_column()
+        if imgui.small_button("try"):
+            self.try_shard_fx(name)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("Set it off now in the preview (not saved)")
+        imgui.pop_id()
+
+    def try_shard_fx(self, name: str) -> None:
+        if not self.player:
+            self.say("Cut the shards first.")
+            return
+        if self.mode == "Perform":
+            t = self.player.t
+        else:
+            prog = self.program()
+            t = prog.song_time(self.T)
+            if t is None:
+                t = prog.song_start
+                self.seek(prog.program_time(t))
+            if self.audio and not self.audio.playing:
+                self.play()
+        self.player.engine.events.fire(name, t)
+
     # ---- the instrument's windows ------------------------------------------
 
     def player_window(self, name: str) -> None:
@@ -1510,6 +1601,7 @@ def layouts(editor: Editor) -> tuple[hello_imgui.DockingParams, hello_imgui.Dock
         _window("Preview", "MainDockSpace", editor.preview_window),
         _window("Timeline", "Bottom", editor.timeline_window),
         _window("Video settings", "Right", editor.settings_window),
+        _window("Shard effects", "Right", editor.shard_fx_window),
     ]
     edit.layout_condition = hello_imgui.DockingLayoutCondition.application_start
 
@@ -1523,7 +1615,8 @@ def layouts(editor: Editor) -> tuple[hello_imgui.DockingParams, hello_imgui.Dock
     ]
     dock = {"Output": "MainDockSpace", "Transport": "PRight", "Edit": "PRightBottom", "Sequencer": "PBottom",
             "Music": "PBottom", "Pool": "PLeft"}
-    perform.dockable_windows = [_window(n, dock[n], lambda n=n: editor.player_window(n), False) for n in PLAYER_WINDOWS]
+    perform.dockable_windows = [_window(n, dock[n], lambda n=n: editor.player_window(n), False) for n in PLAYER_WINDOWS] + [
+        _window("Shard effects##perform", "PRightBottom", editor.shard_fx_window)]
     perform.layout_condition = hello_imgui.DockingLayoutCondition.application_start
     return edit, perform
 

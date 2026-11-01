@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import fx as fxlib
+from .events import Scheduler
 
 CHOICES = ["random", "bag", "no_repeat", "intensity"]
 PROJECT_FILE = "project.json"
@@ -135,6 +136,8 @@ class Project:
     cut: dict = field(default_factory=default_cut)
     titles: list[Title] = field(default_factory=list)
     output: dict = field(default_factory=default_output)
+    # Shard effects (events.EVENTS): {"fireworks": {"rate": 0.3, "sync": 1.0, "strength": 0.8}, ...}
+    shard_fx: dict[str, dict] = field(default_factory=dict)
 
     # ---- files ---------------------------------------------------------
 
@@ -285,6 +288,8 @@ class FrameState:
     master: dict[str, float]
     palette: list[str]
     music: dict[str, float]
+    # Shard effects striking now: name -> (amount, age 0..1, seed), see events.Scheduler.
+    events: dict[str, tuple[float, float, float]] = field(default_factory=dict)
 
 
 class Engine:
@@ -302,6 +307,7 @@ class Engine:
         self.fill = False
         self.punch: dict[str, float] = {}
         self.recording = False
+        self.events = Scheduler(self)
         self.retime()
 
     # ---- clock ---------------------------------------------------------
@@ -314,6 +320,7 @@ class Engine:
         self.analysis = a
         # (palette index, intensity level) of each bar from the start.
         self._palettes: list[tuple[int, int]] = []
+        self.events.reset()
         self.reset()
 
     def reset(self) -> None:
@@ -539,4 +546,4 @@ class Engine:
         bar = int(math.floor(max(0.0, self.beats(t)) / 4))
         palette = p.palettes[self.palette_index(bar) % len(p.palettes)] if p.palettes else fxlib.PALETTES[0]
         pi, _ = self.pattern_for_step(g)
-        return FrameState(t, g, pi, lanes, master, palette, music)
+        return FrameState(t, g, pi, lanes, master, palette, music, self.events.at(t))
