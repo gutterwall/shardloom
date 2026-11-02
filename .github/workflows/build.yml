@@ -22,6 +22,8 @@ jobs:
       - name: Software OpenGL (EGL) for the render tests
         run: sudo apt-get update -q && sudo apt-get install -yq libegl1 libgl1-mesa-dri libgles2
       - run: pip install -e '.[test]'
+      - name: Playwright, to test the web app in the runner's Chrome
+        run: pip install playwright
       - run: python -m pytest -v
 
   linux-build:

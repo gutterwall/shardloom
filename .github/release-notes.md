@@ -10,7 +10,11 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version
+## New in this version: Shardloom on phones
+
+Shardloom now runs on Android phones, iPhones and tablets, in the browser: open **https://gutterwall.github.io/shardloom/** and add it to your home screen. It is the same Shardloom, ported to the web: songs, videos and photos from your phone, shards cut on the phone, the sequencer, layers, shard effects, shard timing and titles, and MP4s rendered on the phone for YouTube, Instagram or TikTok. Nothing is uploaded. **Pack** a project to move it between your phone and a computer, either way.
+
+## Shard timing and Colour (0.5)
 
 ### Shard timing
 

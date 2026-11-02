@@ -5,4 +5,4 @@ by a probability step sequencer, and the picture follows the music's beat and
 intensity. The editor adds titles and renders for YouTube and Instagram.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

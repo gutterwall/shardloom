@@ -1,8 +1,10 @@
 # Shardloom
 
-A step-sequenced video instrument and editor for Linux and Windows. Shardloom cuts your raw footage and photos into small random **shards**, plays them from a probability step sequencer locked to your song's beats, and lets the music's intensity and beat drive colour, palettes and effects. Add opening and closing titles, play it live, record your moves, and render frame-exact MP4s sized for YouTube or Instagram.
+A step-sequenced video instrument and editor for Linux, Windows, and phones and tablets (in the browser). Shardloom cuts your raw footage and photos into small random **shards**, plays them from a probability step sequencer locked to your song's beats, and lets the music's intensity and beat drive colour, palettes and effects. Add opening and closing titles, play it live, record your moves, and render frame-exact MP4s sized for YouTube or Instagram.
 
 ## Install
+
+**Android, iPhone and iPad:** open **https://gutterwall.github.io/shardloom/** and add it to your home screen (Chrome: menu → *Add to home screen*; Safari: Share → *Add to Home Screen*). See [On phones](#on-phones).
 
 **Windows:** download `Shardloom-…-windows-x64.zip` from [Releases](https://github.com/gutterwall/shardloom/releases), unzip it, and double-click `Shardloom.exe`.
 
@@ -61,6 +63,23 @@ My video/
 ```
 
 The **File** menu can save a copy as a new project, or pack a project into one `.zip` with its media. Opening a `.zip` unpacks it and rebuilds the shards and analysis. The same seed and settings always cut the same shards.
+
+## On phones
+
+The web app in `web/` is Shardloom ported to the browser, made for touch screens. It does what the editor's Edit workspace does, with the sequencer's layers and steps in a **Layers** tab:
+
+- **Media:** choose the song and add videos and photos from the phone; **Cut shards** cuts them on the phone.
+- **Layers:** each layer's blend, opacity, how it picks shards and its effects; the step grid and arrangement; whole-picture effects; which effects the music moves; tempo and palettes.
+- **Shard effects**, **Shard timing** and **Titles**, as on the desktop.
+- **Video:** the size, frame rate, quality, song section and fades, and **Render video**. **Save** shares the MP4 to Photos, Files or another app.
+
+Everything stays on the device, kept by the browser. It works offline once opened. Nothing is uploaded.
+
+It runs the same sequencer, analysis and shaders as the desktop, so a project looks the same on both (the tests check that the two agree). **Pack** a project (projects list, or tap its name) to get a `.zip` that the desktop opens with *File → Open packed project*; a project packed on the desktop opens on the phone with **Open a packed project**. The shards and the song analysis are rebuilt after moving.
+
+Needs a recent browser: Chrome on Android, Safari on iOS 17 or newer, or any up-to-date desktop browser. Rendering is exact, frame by frame, where the browser has WebCodecs (Chrome, Edge, Safari 26). Elsewhere it records the video as it plays, which takes as long as the video. Keep the app open and the screen on while it renders. Big sizes (1440p, 4K) are slow on a phone; shard detail is 360 by default to save space.
+
+To try it from a checkout: `python -m http.server -d web 8000` and open http://localhost:8000. The shaders in `web/js/shaders.js` are made from `shardloom/shaders.py` by `python web/tools/gen_shaders.py`. It is published to GitHub Pages by `.github/workflows/web.yml`.
 
 ## The command line
 
@@ -133,7 +152,7 @@ Shardloom was inspired by the description of [ABJEXT Studio](https://github.com/
 .venv/bin/python -m pytest
 ```
 
-The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. CI runs them on Linux and Windows, builds `Shardloom.exe` and the Linux bundle with PyInstaller (`packaging/shardloom.spec`), and smoke-tests both: it makes a project, renders it, and opens both editor workspaces.
+The tests make their own media and need OpenGL 3.3 without a window (EGL on Linux); the render tests are skipped without it. `tests/test_web.py` runs the web app's code in Chrome against the desktop's, through Playwright (`pip install playwright`); it is skipped without them. CI runs them on Linux and Windows, builds `Shardloom.exe` and the Linux bundle with PyInstaller (`packaging/shardloom.spec`), and smoke-tests both: it makes a project, renders it, and opens both editor workspaces.
 
 ## License
 
