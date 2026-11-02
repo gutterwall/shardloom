@@ -17,7 +17,7 @@ import { Renderer } from "./renderer.js";
 import { POSITIONS, FONTS } from "./titles.js";
 import { Lane, Title, Modulation, Source, CHOICES, fromDict, normalise, starterProject, newSourceId, kindOf } from "./project.js";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.6.1";
 
 // ---- app state -------------------------------------------------------------------
 

@@ -34,9 +34,9 @@ if __name__ == "__main__":
     target = ROOT / "web" / "js" / "shaders.js"
     text = generate()
     if "--check" in sys.argv:
-        if not target.exists() or target.read_text() != text:
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
             sys.exit("web/js/shaders.js is out of date: run python web/tools/gen_shaders.py")
         print("web/js/shaders.js is up to date")
     else:
-        target.write_text(text)
+        target.write_text(text, encoding="utf-8")
         print(f"wrote {target}")

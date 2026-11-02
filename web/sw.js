@@ -1,6 +1,6 @@
 // Keeps Shardloom working offline: the app's own files are cached, everything else (your media) is local anyway.
 
-const CACHE = "shardloom-0.6.0";
+const CACHE = "shardloom-0.6.1";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "icons/icon.svg", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",

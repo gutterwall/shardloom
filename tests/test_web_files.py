@@ -16,7 +16,7 @@ def test_shaders_are_generated_from_the_desktop_ones():
 
 
 def test_offline_cache_lists_every_file():
-    sw = (WEB / "sw.js").read_text()
+    sw = (WEB / "sw.js").read_text(encoding="utf-8")
     listed = set(re.findall(r'"([^"]+\.(?:js|mjs|css|html|png|svg|webmanifest))"', sw))
     on_disk = {p.relative_to(WEB).as_posix() for p in WEB.rglob("*")
                if p.is_file() and p.suffix in {".js", ".mjs", ".css", ".html", ".png", ".svg", ".webmanifest"}
@@ -25,6 +25,6 @@ def test_offline_cache_lists_every_file():
 
 
 def test_versions_match():
-    app = re.search(r'VERSION = "([^"]+)"', (WEB / "js" / "app.js").read_text()).group(1)
-    cache = re.search(r'CACHE = "shardloom-([^"]+)"', (WEB / "sw.js").read_text()).group(1)
+    app = re.search(r'VERSION = "([^"]+)"', (WEB / "js" / "app.js").read_text(encoding="utf-8")).group(1)
+    cache = re.search(r'CACHE = "shardloom-([^"]+)"', (WEB / "sw.js").read_text(encoding="utf-8")).group(1)
     assert app == cache == shardloom.__version__
