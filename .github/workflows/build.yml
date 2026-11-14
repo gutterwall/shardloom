@@ -95,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download -R pal1000/mesa-dist-win --pattern "*release-msvc.7z" --dir mesa
+          gh release download 26.2.5 -R pal1000/mesa-dist-win --pattern "*release-msvc.7z" --dir mesa
           7z x (Get-ChildItem mesa\*.7z).FullName -omesa\x -y | Out-Null
           $py = Split-Path (Get-Command python).Source
           Copy-Item mesa\x\x64\*.dll $py
