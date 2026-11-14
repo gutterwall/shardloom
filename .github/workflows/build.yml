@@ -15,8 +15,8 @@ jobs:
     name: Tests (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Software OpenGL (EGL) for the render tests
@@ -31,8 +31,8 @@ jobs:
     # The oldest supported runner, so the bundle runs on glibc 2.35 and newer.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Software OpenGL and a virtual display for the smoke run
@@ -85,8 +85,8 @@ jobs:
       # Mesa's software OpenGL, for the tests and the smoke run only; it is not shipped.
       GALLIUM_DRIVER: llvmpipe
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: pip install -e '.[test]' pyinstaller
@@ -95,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download 26.2.5 -R pal1000/mesa-dist-win --pattern "*release-msvc.7z" --dir mesa
+          gh release download 26.2.6 -R pal1000/mesa-dist-win --pattern "*release-mingw.7z" --dir mesa
           7z x (Get-ChildItem mesa\*.7z).FullName -omesa\x -y | Out-Null
           $py = Split-Path (Get-Command python).Source
           Copy-Item mesa\x\x64\*.dll $py
@@ -158,7 +158,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           pattern: Shardloom-*
