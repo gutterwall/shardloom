@@ -62,7 +62,7 @@ jobs:
           $app pack proj -o proj.zip
           $app unpack proj.zip unpacked
           test -f unpacked/pool/pool.json
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: smoke-test-linux
           path: |
@@ -73,7 +73,7 @@ jobs:
           version=$(python -c "import shardloom; print(shardloom.__version__)")
           cp README.md LICENSE packaging/linux/install.sh packaging/linux/shardloom.desktop dist/Shardloom/
           tar czf "Shardloom-$version-linux-x64.tar.gz" -C dist Shardloom
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: Shardloom-linux-x64
           path: Shardloom-*-linux-x64.tar.gz
@@ -95,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download -R pal1000/mesa-dist-win --pattern "*release-msvc.7z" --dir mesa
+          gh release download 26.2.5 -R pal1000/mesa-dist-win --pattern "*release-msvc.7z" --dir mesa
           7z x (Get-ChildItem mesa\*.7z).FullName -omesa\x -y | Out-Null
           $py = Split-Path (Get-Command python).Source
           Copy-Item mesa\x\x64\*.dll $py
@@ -132,7 +132,7 @@ jobs:
           app\Shardloom.exe unpack proj.zip unpacked
           if ($LASTEXITCODE) { exit 1 }
           if (-not (Test-Path unpacked\pool\pool.json)) { Write-Error "unpacking did not rebuild the shards"; exit 1 }
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: smoke-test
           path: |
@@ -145,7 +145,7 @@ jobs:
           $version = python -c "import shardloom; print(shardloom.__version__)"
           Copy-Item README.md, LICENSE dist\Shardloom
           Compress-Archive dist\Shardloom "Shardloom-$version-windows-x64.zip"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: Shardloom-windows-x64
           path: Shardloom-*-windows-x64.zip
@@ -159,7 +159,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           pattern: Shardloom-*
           merge-multiple: true
