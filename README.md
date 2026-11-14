@@ -15,6 +15,13 @@ tar xzf Shardloom-*-linux-x64.tar.gz
 Shardloom/install.sh        # into ~/.local, with a menu entry and the `shardloom` command
 ```
 
+Releases after v0.6.1 are built by CI from the tagged commit, and each download carries a GitHub build provenance attestation and a checksum:
+
+```sh
+gh attestation verify Shardloom-*-linux-x64.tar.gz --repo gutterwall/shardloom
+sha256sum -c Shardloom-*-linux-x64.tar.gz.sha256
+```
+
 Built on Ubuntu 22.04, so it runs on that and newer distributions (glibc 2.35+). `Shardloom/install.sh --remove` uninstalls it.
 
 **From source** (Linux, or Windows with Python 3.11+): everything installs with pip. Video goes through FFmpeg (PyAV) and sound through miniaudio, and you need OpenGL 3.3.
