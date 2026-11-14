@@ -52,3 +52,14 @@ Projects from 0.2 open in the editor. Their media is copied into the project the
 It installs into `~/.local` for your user only (`install.sh --remove` uninstalls it). Needs a 64-bit distribution from 2022 or later (glibc 2.35, e.g. Ubuntu 22.04, Fedora 36, Debian 12) and OpenGL 3.3.
 
 Or from source: `pip install git+https://github.com/gutterwall/shardloom`
+
+## Checking a download (0.6.2)
+
+From 0.6.2 on, CI builds each download from the tagged commit and publishes a GitHub build provenance attestation and a `.sha256` checksum with it. With the [GitHub CLI](https://cli.github.com/):
+
+```sh
+gh attestation verify Shardloom-*-linux-x64.tar.gz --repo gutterwall/shardloom
+sha256sum -c Shardloom-*-linux-x64.tar.gz.sha256
+```
+
+Nothing else changed in the app since 0.6.1.
