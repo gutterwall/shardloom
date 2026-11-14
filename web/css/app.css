@@ -153,7 +153,7 @@ details.card[open] > summary::before { transform: rotate(90deg); }
 
 .fxrow { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .fxrow:last-child { border-bottom: none; }
-.fxrow .slider { grid-column: 1 / -1; }
+.fxrow .slider, .fxrow .field, .fxrow .check, .fxrow > p { grid-column: 1 / -1; }
 .share { display: grid; grid-template-columns: 72px 1fr 80px 44px; gap: 8px; align-items: center; min-height: 40px; }
 .bar { height: 8px; border-radius: 4px; background: var(--accent); min-width: 2px; }
 

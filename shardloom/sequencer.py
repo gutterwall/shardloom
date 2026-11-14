@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import fx as fxlib
 from . import pace as pacelib
-from .events import Scheduler
+from .events import LAYER, Scheduler, layer_strikes
 
 CHOICES = ["random", "bag", "no_repeat", "intensity"]
 PROJECT_FILE = "project.json"
@@ -280,6 +280,8 @@ class LaneState:
     fx: dict[str, float]
     opacity: float
     blend: str
+    # One layer shard effects striking this layer now (events.layer_strikes): shader setting -> value.
+    strike: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -589,6 +591,8 @@ class Engine:
             mods.setdefault(scope, {})
             mods[scope][name] = mods[scope].get(name, 0.0) + m.amount * music.get(m.source, 0.0)
         punch = self.punch_at(t)
+        hits = self.events.at(t)
+        strikes = layer_strikes(p, hits, self.beats(t)) if any(n in hits for n in LAYER) else {}
         lanes = []
         for li, lane in enumerate(p.lanes):
             voice = None
@@ -602,9 +606,10 @@ class Engine:
                 n = int((t - voice.t0) * self.pool_fps * voice.speed)
                 frame = (voice.start - n if voice.reverse else voice.start + n) % max(1, length)
             lane_fx = fxlib.add(lane.fx, voice.fx if voice else {}, mods.get("all"), mods.get(f"lane{li}"))
-            lanes.append(LaneState(None if lane.mute else voice, frame, lane_fx, lane.opacity, lane.blend))
+            lanes.append(LaneState(None if lane.mute else voice, frame, lane_fx, lane.opacity, lane.blend,
+                                   strikes.get(li, {})))
         master = fxlib.add(p.master_fx, mods.get("master"), punch)
         bar = int(math.floor(max(0.0, self.beats(t)) / 4))
         palette = p.palettes[self.palette_index(bar) % len(p.palettes)] if p.palettes else fxlib.PALETTES[0]
         pi, _ = self.pattern_for_step(g)
-        return FrameState(t, g, pi, lanes, master, palette, music, self.events.at(t))
+        return FrameState(t, g, pi, lanes, master, palette, music, hits)

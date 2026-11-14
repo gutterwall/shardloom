@@ -44,12 +44,15 @@ Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a n
   - **Format:** YouTube (720p, 1080p, 1440p, 4K, Shorts), Instagram (Reel/Story 9:16, feed 4:5, square, landscape), TikTok or a custom size; frame rate; quality; song section; fade in and out.
   - **Titles:** text and subtitle, at the start or end, over the picture or on their own card before or after the song. Each has a position, size, colour, font, shadow, fade, and a background colour or picture.
   - **Render:** render the current size, or several sizes one after the other into `renders/`.
-- **Shard effects** (beside Video settings, and in Perform too): effects that strike now and then across the whole picture.
+- **Shard effects** (beside Video settings, and in Perform too): effects that strike now and then across the whole picture, or on single layers.
   - **Digital glitch:** datamosh, pixel sort, block corruption, slice tear.
   - **Analog:** VHS tracking, CRT, vertical roll, chroma bleed.
   - **Film:** film burn, light leak, film damage (scratches, dust, weave, flicker).
   - **Pyrotechnics:** fireworks, explosion (fireball, shockwave, flash and shake).
   - **Colour**, following the music: hue shift (further round the colour wheel when the song is intense), brightness (brighter when loud, darker when quiet) and saturation (richer when intense, greyer when calm). At full **how often** they're on all the time; lower, they come and go with the pulse setting.
+  - **One layer**, on single layers instead of the whole picture:
+    - **Colour lens:** a single-colour lens fades in over one of the overlay layers, a new random colour each time, holds, and fades away.
+    - **Mirror:** folds one or more layers (**layers**) into a mirror (left and right), a quad mirror (four ways) or a kaleidoscope (3 to 12 **segments**). The fold can **zoom** in from the middle or bring mirrored copies in from the edges, as deep as **zoom depth**. **On the beat**, the zoom punches in on every beat and the pattern turns a notch each beat; off, it zooms and turns smoothly through each strike.
 
   Each has three sliders: **how often** it strikes, **pulse** (left: between the beats, middle: anywhere, right: on the beats and hits) and **strength**. **try** sets one off in the preview now. Strikes follow the project's seed, so a render matches the preview every time.
 - **Shard timing:** hold each layer on one shard for beats at a time instead of cutting on every sequencer step. Each layer plays a shard for a length (¼, ½, 1, 2, 4, 6 or 8 beats, picked by your weights), from the same frame **plays of each shard** times over (4 by default), then moves on to a new shard and length. **Speed** leans every length shorter or longer, and **faster when intense** makes the intense parts of the song change shards more often (and the calm parts less). The panel shows each length's chance right now and what each layer is playing.

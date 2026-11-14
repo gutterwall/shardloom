@@ -935,6 +935,28 @@ function tryEffect(name) {
   S.engine.events.fire(name, t);
 }
 
+// The mirror's own settings, under its sliders.
+function MirrorOptions({ s, save }) {
+  const set = (k, v) => { s[k] = v; save(); };
+  const n = Math.max(1, S.project.lanes.length);
+  return html`
+    <${Field} label="style"><${Select} value=${s.style}
+      options=${[["mirror", "Mirror"], ["quad", "Quad mirror"], ["kaleido", "Kaleidoscope"]]}
+      on=${v => set("style", v)} /></${Field}>
+    ${s.style === "kaleido" && html`<${Slider} label="segments" value=${s.segments} min=${3} max=${12} step=${1}
+      fmt=${v => v} on=${v => set("segments", v)} />`}
+    <${Field} label="zoom"><${Select} value=${s.zoom}
+      options=${[["middle", "from the middle"], ["edges", "from the edges"], ["none", "none"]]}
+      on=${v => set("zoom", v)} /></${Field}>
+    ${s.zoom !== "none" && html`<${Slider} label="zoom depth" value=${s.depth}
+      on=${v => set("depth", Math.round(v * 1000) / 1000)} />`}
+    <${Slider} label="layers" value=${Math.min(s.layers, n)} min=${1} max=${n} step=${1} fmt=${v => v}
+      on=${v => set("layers", v)} title="How many layers each strike folds." />
+    <${Check} label="On the beat" value=${!!s.beat} on=${v => set("beat", v)} />
+    <p class="faint">On the beat: the zoom punches in on every beat and the pattern turns a notch each beat.
+      Off: it zooms and turns smoothly through the strike.</p>`;
+}
+
 function EffectsPanel() {
   const p = S.project;
   const on = eventlib.NAMES.filter(n => eventlib.setting(p, n).rate > 0).length;
@@ -965,6 +987,7 @@ function EffectsPanel() {
           <${Slider} label="pulse" value=${s.sync} min=${-1} max=${1} fmt=${syncLabel} on=${v => set("sync", v)}
             title="Left: strikes between the beats. Middle: anywhere. Right: on the beats and hits." />
           <${Slider} label="strength" value=${s.strength} on=${v => set("strength", v)} />
+          ${name === "mirror" && html`<${MirrorOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
         </div>`;
       })}`)}
     <p class="faint">Strikes fall the same way every time you play or render.</p>`;

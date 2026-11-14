@@ -1,11 +1,12 @@
 // Shard effects: glitches, analog faults, film burns, fireworks and explosions that strike now and then,
-// and Colour effects that follow the music. As events.py on the desktop; settings in project.shard_fx[name]:
-//   rate 0..1 how often, sync -1..1 between / any / on the pulses, strength 0..1 how hard.
+// Colour effects that follow the music, and One layer effects (lens, mirror) that land on layers instead of the
+// whole picture. As events.py on the desktop; settings in project.shard_fx[name]:
+//   rate 0..1 how often, sync -1..1 between / any / on the pulses, strength 0..1 how hard, and an effect's options.
 
-import { rand, pmod } from "./rand.js";
+import { rand, pmod, pyround } from "./rand.js";
 
-const E = (label, group, about, seconds, envelope, follows = "", bothWays = false, peak = 0.4) =>
-  ({ label, group, about, seconds, envelope, follows, bothWays, peak });
+const E = (label, group, about, seconds, envelope, follows = "", bothWays = false, peak = 0.4, layer = false,
+  options = {}) => ({ label, group, about, seconds, envelope, follows, bothWays, peak, layer, options });
 
 export const EVENTS = {
   datamosh: E("Datamosh", "Digital glitch", "Blocks smear the last frame along with the motion", 0.6, "flat"),
@@ -27,16 +28,27 @@ export const EVENTS = {
     0.4, "flat", "level", true, 1.0),
   saturation: E("Saturation", "Colour", "Richer colour when the music is intense, greyer when it is calm",
     0.4, "flat", "intensity", true, 1.0),
+  lens: E("Colour lens", "One layer", "A coloured lens fades in over one of the overlay layers: " +
+    "a new random colour each time", 3.0, "fade", "", false, 0.4, true),
+  mirror: E("Mirror", "One layer", "Folds layers into mirror images or a kaleidoscope that zooms " +
+    "from the middle or the edges, on the beat", 4.0, "flat", "", false, 0.4, true,
+    { style: "kaleido", segments: 6, zoom: "middle", depth: 0.5, layers: 1, beat: true }),
 };
 export const NAMES = Object.keys(EVENTS);
-export const GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour"];
+export const PICTURE = NAMES.filter(n => !EVENTS[n].layer);   // the whole-picture ones, in shaders.EVENTS order
+export const LAYER = NAMES.filter(n => EVENTS[n].layer);      // the One layer ones
+export const GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer"];
+
+export const MIRROR_STYLES = ["mirror", "quad", "kaleido"];   // shaders.EFFECTS fold_style 0, 1, 2
+export const MIRROR_ZOOMS = ["middle", "edges", "none"];
 
 export function defaultSetting() {
   return { rate: 0, sync: 0, strength: 0.7 };
 }
 
 export function setting(project, name) {
-  return { ...defaultSetting(), ...((project.shard_fx || {})[name] || {}) };
+  const ev = EVENTS[name];
+  return { ...defaultSetting(), ...(ev ? ev.options : {}), ...((project.shard_fx || {})[name] || {}) };
 }
 
 // 0..1 over a strike's life (age 0..1).
@@ -44,7 +56,67 @@ export function envelope(kind, age) {
   if (age < 0 || age >= 1) return 0;
   if (kind === "spike") return (1 - age) ** 2;
   if (kind === "swell") return Math.sin(Math.PI * age);
+  if (kind === "fade") return Math.min(1, age / 0.4, (1 - age) / 0.25);
   return Math.min(1, age / 0.04, (1 - age) / 0.15);
+}
+
+// As hsv() in the shaders (h 0..1).
+export function hsv(h, s, v) {
+  const k = n => Math.min(1, Math.max(0, Math.abs(pmod(h * 6 + n, 6) - 3) - 1));
+  return [0, 4, 2].map(n => v * (1 + (k(n) - 1) * s));
+}
+
+// Which layers a strike of a One layer effect lands on: count of them, from its seed.
+// The lens goes on the overlay layers (above the first) when there are any; the mirror on any layer.
+export function pickLayers(project, name, seed, count) {
+  let lanes = project.lanes.map((lane, li) => [lane, li]).filter(([lane]) => !lane.mute).map(([, li]) => li);
+  if (name === "lens" && lanes.length > 1) {
+    const over = lanes.filter(li => li > 0);
+    if (over.length) lanes = over;
+  }
+  const key = Math.floor(seed * 1e6);
+  const i = NAMES.indexOf(name);
+  const order = new Map(lanes.map(li => [li, rand(project.seed, 3571, i, li, key)]));
+  lanes.sort((a, b) => order.get(a) - order.get(b) || a - b);
+  return lanes.slice(0, Math.max(1, count));
+}
+
+// layer index -> the shader settings of the One layer effects striking it (see shaders.EFFECTS).
+// hits: Scheduler.at(t); beats: the song position in beats, for the mirror's beat moves.
+export function layerStrikes(project, hits, beats) {
+  const out = {};
+  const put = (li, values) => { out[li] = { ...(out[li] || {}), ...values }; };
+  let hit = hits.lens;
+  if (hit) {
+    const [amount, , sd] = hit;
+    const [r, g, b] = hsv(pmod(sd * 7, 1), 0.85, 1);
+    for (const li of pickLayers(project, "lens", sd, 1)) put(li, { lens: amount, lens_r: r, lens_g: g, lens_b: b });
+  }
+  hit = hits.mirror;
+  if (hit) {
+    const [amount, age, sd] = hit;
+    const s = setting(project, "mirror");
+    const style = MIRROR_STYLES.includes(s.style) ? MIRROR_STYLES.indexOf(s.style) : 2;
+    const segments = Math.min(12, Math.max(3, pyround(Number(s.segments))));
+    const depth = Math.min(1, Math.max(0, Number(s.depth)));
+    const frac = beats - Math.floor(beats);
+    let zoom, turn;
+    if (s.beat) {
+      zoom = depth * (1 - frac) ** 2;                     // punches in on each beat and eases off
+      const notch = [Math.PI / 2, Math.PI / 4, Math.PI / segments][style];
+      turn = Math.floor(beats) * notch;                   // a notch round on each beat
+    } else {
+      zoom = depth * Math.sin(Math.PI * Math.min(1, Math.max(0, age)));
+      turn = age * 1.2;
+    }
+    zoom *= { middle: 1, edges: -1 }[s.zoom] ?? 0;
+    turn += sd * 2 * Math.PI;
+    for (const li of pickLayers(project, "mirror", sd, Math.trunc(Number(s.layers)))) {
+      put(li, { fold: amount, fold_style: style, fold_segments: segments, fold_zoom: zoom,
+        fold_turn: pmod(turn, 2 * Math.PI) });
+    }
+  }
+  return out;
 }
 
 // The chance of a strike on a step with this pulse (0 between the beats .. 1 on a strong beat).

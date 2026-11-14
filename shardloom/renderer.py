@@ -12,6 +12,9 @@ from . import fx as fxlib
 from . import shaders
 from .sequencer import FrameState
 
+# The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layer_strikes).
+LAYER_UNIFORMS = ("lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn")
+
 
 def headless_context() -> moderngl.Context:
     """An offscreen OpenGL 3.3 context, for export and tests: EGL on Linux (no display needed),
@@ -75,7 +78,7 @@ class Renderer:
         return (out / src, 1.0) if out < src else (1.0, src / out)
 
     def _effects(self, source: moderngl.Texture, fbo: moderngl.Framebuffer, amounts: dict, state: FrameState,
-                 flip: bool, seed: float) -> None:
+                 flip: bool, seed: float, strike: dict | None = None) -> None:
         prog = self.effects
         fbo.use()
         source.use(0)
@@ -89,6 +92,14 @@ class Renderer:
             prog[f"pal{i}"].value = fxlib.hex_rgb(colour)
         for name in fxlib.FX:
             prog[name].value = float(amounts.get(name, 0.0))
+        strike = strike or {}
+        for name in LAYER_UNIFORMS:
+            u = prog.get(name, None)
+            if u is not None:
+                u.value = float(strike.get(name, 0.0))
+        u = prog.get("lens_rgb", None)
+        if u is not None:
+            u.value = (float(strike.get("lens_r", 0.0)), float(strike.get("lens_g", 0.0)), float(strike.get("lens_b", 0.0)))
         self.vao["effects"].render(moderngl.TRIANGLE_STRIP)
 
     def _shard_effects(self, source: moderngl.Texture, previous: moderngl.Texture, state: FrameState) -> None:
@@ -100,7 +111,7 @@ class Renderer:
         prog["prev"].value = 1
         prog["res"].value = (float(self.width), float(self.height))
         prog["time"].value = float(state.t)
-        hits = [state.events.get(name, (0.0, 0.0, 0.0)) for name in eventlib.NAMES]
+        hits = [state.events.get(name, (0.0, 0.0, 0.0)) for name in eventlib.PICTURE]
         for k, name in enumerate(("amt", "age", "sd")):
             # Drivers may drop the end of an array the shader never reads, so write only what is there.
             u = prog.get(name, None)
@@ -126,7 +137,8 @@ class Renderer:
                 frame = np.ascontiguousarray(self.frames.frame(lane.voice.shard, lane.frame))
                 tex.write(frame.tobytes())
                 self._uploaded[li] = key
-            self._effects(tex, self.layer[1], lane.fx, state, True, seed=li * 17.0 + lane.voice.step)
+            self._effects(tex, self.layer[1], lane.fx, state, True, seed=li * 17.0 + lane.voice.step,
+                          strike=lane.strike)
             # Blend the lane over what is there so far.
             b[1].use()
             a[0].use(0)
@@ -141,7 +153,7 @@ class Renderer:
         self._effects(a[0], self.mastered[1], state.master, state, False, seed=state.step)
         prev = self.out[self._out]
         picture = self.mastered[0]
-        if state.events:
+        if any(name in state.events for name in eventlib.PICTURE):
             self._shard_effects(picture, prev[0], state)
             picture = self.struck[0]
         self._out ^= 1

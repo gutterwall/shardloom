@@ -6,6 +6,9 @@ import * as eventlib from "./events.js";
 import * as shaders from "./shaders.js";
 import { renderTitle } from "./titles.js";
 
+// The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layerStrikes).
+const LAYER_UNIFORMS = ["lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn"];
+
 class Prog {
   constructor(gl, fragment) {
     this.gl = gl;
@@ -157,7 +160,7 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     return out < src ? [out / src, 1] : [1, src / out];
   }
 
-  runEffects(source, target, amounts, state, flip, seed) {
+  runEffects(source, target, amounts, state, flip, seed, strike = {}) {
     const p = this.effects.use();
     this.bind(0, source);
     p.i("tex", 0);
@@ -168,6 +171,8 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     p.i("flip", flip ? 1 : 0);
     state.palette.slice(0, 3).forEach((c, i) => p.f(`pal${i}`, ...fxlib.hexRgb(c)));
     for (const name of Object.keys(fxlib.FX)) p.f(name, amounts[name] || 0);
+    for (const name of LAYER_UNIFORMS) p.f(name, strike[name] || 0);
+    p.f("lens_rgb", strike.lens_r || 0, strike.lens_g || 0, strike.lens_b || 0);
     this.draw(target);
   }
 
@@ -195,7 +200,7 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
           this.uploaded[li] = key;
         }
       }
-      this.runEffects(tex, this.layer, lane.fx, state, true, li * 17 + lane.voice.step);
+      this.runEffects(tex, this.layer, lane.fx, state, true, li * 17 + lane.voice.step, lane.strike || {});
       // Blend the lane over what is there so far.
       const p = this.blend.use();
       this.bind(0, a.tex);
@@ -210,7 +215,7 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     this.runEffects(a.tex, this.mastered, state.master, state, false, state.step);
     const prev = this.out[this._out];
     let picture = this.mastered.tex;
-    if (Object.keys(state.events).length) {
+    if (eventlib.PICTURE.some(n => n in state.events)) {
       const p = this.events.use();
       this.bind(0, picture);
       this.bind(1, prev.tex);
@@ -218,7 +223,7 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
       p.i("prev", 1);
       p.f("res", this.width, this.height);
       p.f("time", state.t);
-      const hits = eventlib.NAMES.map(n => state.events[n] || [0, 0, 0]);
+      const hits = eventlib.PICTURE.map(n => state.events[n] || [0, 0, 0]);
       ["amt", "age", "sd"].forEach((name, k) => p.fv(name, hits.map(h => h[k])));
       this.draw(this.struck);
       picture = this.struck.tex;
