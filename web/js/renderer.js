@@ -7,7 +7,7 @@ import * as shaders from "./shaders.js";
 import { renderTitle } from "./titles.js";
 
 // The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layerStrikes).
-const LAYER_UNIFORMS = ["lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn"];
+const LAYER_UNIFORMS = ["lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn", "fold_leaves", "fold_seed"];
 
 class Prog {
   constructor(gl, fragment) {

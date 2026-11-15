@@ -1495,6 +1495,8 @@ class Editor:
             for name in (n for n in events.NAMES if events.EVENTS[n].group == group):
                 self.shard_fx_row(name)
             imgui.end_table()
+            if group == "Colour":
+                self.flip_options(events.setting(p, "flip"))
             if group == "One layer":
                 self.mirror_options(events.setting(p, "mirror"))
         imgui.spacing()
@@ -1572,6 +1574,13 @@ class Editor:
             imgui.set_next_item_width(width)
             ch, s["depth"] = imgui.slider_float("zoom depth", float(s["depth"]), 0.0, 1.0, "%.2f")
             changed |= ch
+        imgui.set_next_item_width(width)
+        ch, s["leaves"] = imgui.slider_float("leaf colours", float(s.get("leaves", 0.0)), 0.0, 1.0,
+                                             "off" if float(s.get("leaves", 0.0)) <= 0 else "%.2f")
+        changed |= ch
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("Each leaf of the mirror turns over its own share of red, green and blue,\n"
+                              "so every leaf has a different colour. On the beat: new colours each beat.")
         n = max(1, len(self.project.lanes))
         imgui.set_next_item_width(width)
         ch, layers = imgui.slider_int("layers", min(int(s["layers"]), n), 1, n)
@@ -1588,6 +1597,26 @@ class Editor:
         imgui.pop_id()
         if changed:
             self.save_shard_fx("mirror", s)
+
+    def flip_options(self, s: dict) -> None:
+        """Colour flip's own setting, under the Colour effects."""
+        imgui.push_id("flip_options")
+        imgui.spacing()
+        imgui.text_disabled("Colour flip")
+        imgui.indent()
+        labels = ["1 flash a beat", "2 flashes a beat", "4 flashes a beat"]
+        f = int(s["flashes"])
+        i = events.FLASHES.index(f) if f in events.FLASHES else 1
+        imgui.set_next_item_width(imgui.get_content_region_avail().x * 0.6)
+        ch, i = imgui.combo("flashes", i, labels)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("How fast it strobes while it strikes. Each flash turns over a new mix of\n"
+                              "red, green and blue.")
+        imgui.unindent()
+        imgui.pop_id()
+        if ch:
+            s["flashes"] = events.FLASHES[i]
+            self.save_shard_fx("flip", s)
 
     def try_shard_fx(self, name: str) -> None:
         if not self.player:

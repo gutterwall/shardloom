@@ -12,6 +12,9 @@ Whether an effect strikes on a step is a random draw that depends only on the pr
 the effect and the step, so a render is the same every time and from any starting point.
 The shader for the whole-picture ones is shaders.EVENTS; the index of each here is its index there.
 
+Colour flip is a strobe: while it strikes it flashes on and off in time with the beats, and each flash
+turns over one or more of the red, green and blue channels, a new mix each time (flip_channels()).
+
 The One layer effects (lens, mirror) strike the same way but land on one or more of the layers instead of
 the whole picture: layer_strikes() says which layers and how, and shaders.EFFECTS draws them on each layer.
 """
@@ -62,7 +65,10 @@ EVENTS = {
     "mirror": Event("Mirror", "One layer", "Folds layers into mirror images or a kaleidoscope that zooms "
                     "from the middle or the edges, on the beat", 4.0, "flat", layer=True,
                     options={"style": "kaleido", "segments": 6, "zoom": "middle", "depth": 0.5, "layers": 1,
-                             "beat": True}),
+                             "beat": True, "leaves": 0.0}),
+    # Last, so the effects before it keep their strikes (the index is part of each draw).
+    "flip": Event("Colour flip", "Colour", "A strobe that turns over one or more of the red, green and blue "
+                  "channels, a new mix on every flash", 1.5, "flat", options={"flashes": 2}),
 }
 NAMES = list(EVENTS)
 PICTURE = [n for n in NAMES if not EVENTS[n].layer]     # the whole-picture ones, in shaders.EVENTS order
@@ -71,6 +77,7 @@ GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One lay
 
 MIRROR_STYLES = ["mirror", "quad", "kaleido"]           # shaders.EFFECTS fold_style 0, 1, 2
 MIRROR_ZOOMS = ["middle", "edges", "none"]
+FLASHES = [1, 2, 4]                                     # Colour flip flashes per beat
 
 
 def default_setting() -> dict:
@@ -101,6 +108,23 @@ def hsv(h: float, s: float, v: float) -> tuple[float, float, float]:
         x = abs((h * 6.0 + n) % 6.0 - 3.0) - 1.0
         return min(1.0, max(0.0, x))
     return tuple(v * (1.0 + (k(n) - 1.0) * s) for n in (0.0, 4.0, 2.0))
+
+
+def flip_channels(sd: float) -> tuple[bool, bool, bool]:
+    """Which of red, green and blue a Colour flip flash with this seed turns over (as shaders.EVENTS)."""
+    m = 1 + min(6, int(sd * 7.0))
+    return bool(m & 1), bool(m & 2), bool(m & 4)
+
+
+def strobe(project, beats: float, sd: float) -> tuple[bool, float]:
+    """Colour flip at song position beats: (lit now, the seed of this flash), for a strike with seed sd."""
+    from .sequencer import rand
+
+    f = int(setting(project, "flip")["flashes"])
+    f = f if f in FLASHES else 2
+    phase = beats * f
+    k = math.floor(phase)
+    return phase - k < 0.5, rand(project.seed, 6007, k, int(math.floor(sd * 1e6)))
 
 
 def pick_layers(project, name: str, seed: float, count: int) -> list[int]:
@@ -146,9 +170,13 @@ def layer_strikes(project, hits: dict, beats: float) -> dict[int, dict[str, floa
             turn = age * 1.2
         zoom *= {"middle": 1.0, "edges": -1.0}.get(s["zoom"], 0.0)
         turn += sd * math.tau
+        leaves = min(1.0, max(0.0, float(s.get("leaves", 0.0))))
+        # The leaves' colours: new ones on each beat when on the beat.
+        leaf_seed = (sd + 0.6180339887 * math.floor(beats)) % 1.0 if s["beat"] else sd
         for li in pick_layers(project, "mirror", sd, int(s["layers"])):
             out.setdefault(li, {}).update({"fold": amount, "fold_style": float(style), "fold_segments": segments,
-                                           "fold_zoom": zoom, "fold_turn": turn % math.tau})
+                                           "fold_zoom": zoom, "fold_turn": turn % math.tau,
+                                           "fold_leaves": leaves, "fold_seed": leaf_seed})
     return out
 
 
@@ -231,6 +259,11 @@ class Scheduler:
                 level = min(1.0, max(0.0, music.get(ev.follows, 0.0)))
                 amount *= 2.0 * level - 1.0 if ev.both_ways else level
                 hit = (hit[0], rand(p.seed, 104729, i))     # the same direction all through the song
+            sd = hit[1]
+            if name == "flip":
+                lit, sd = strobe(p, e.beats(t), sd)
+                if not lit:
+                    continue
             if amount != 0.0:
-                out[name] = (amount, age, hit[1])
+                out[name] = (amount, age, sd)
         return out

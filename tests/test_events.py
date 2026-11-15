@@ -150,7 +150,7 @@ def struck(e, name, t):
 
 def test_layer_effects_are_not_drawn_on_the_whole_picture():
     assert set(events.LAYER) == {"lens", "mirror"}
-    assert events.PICTURE == events.NAMES[:16]          # the whole-picture shader's indices are unchanged
+    assert events.PICTURE == events.NAMES[:16] + ["flip"]   # the whole-picture shader's indices are unchanged
     assert all(events.EVENTS[n].group == "One layer" for n in events.LAYER)
 
 
@@ -283,3 +283,87 @@ def test_the_mirror_folds_the_layer(ctx):  # noqa: F811
     assert np.abs(folded(fold_zoom=-0.8) - folded(fold_zoom=0.8)).mean() > 3
     half = lane_picture(r, [LaneState(voice, 0, {}, 1.0, "normal", {"fold": 0.5, "fold_style": 0.0})])
     assert np.abs(half - (plain + m) / 2).mean() < 3                  # half way: a cross-fade
+
+
+def test_colour_flip_strobes_on_the_beat():
+    # A beat every 0.5 s from 0.37 s. Lit for the first half of each flash, a new mix of channels each flash.
+    for flashes in events.FLASHES:
+        e = engine({"flip": {"flashes": flashes}})
+        e.events.fire("flip", 1.0)
+        seeds, lit_flashes = {}, set()
+        for t in np.arange(1.01, 1.0 + events.EVENTS["flip"].seconds, 0.01):
+            phase = (t - 0.37) * 2 * flashes
+            if abs(phase - round(phase * 2) / 2) < 0.02:
+                continue                                   # too close to an edge to call
+            hit = e.state(t).events.get("flip")
+            assert (hit is not None) == (phase % 1 < 0.5), (flashes, t)
+            if hit:
+                k = math.floor(phase)
+                assert seeds.setdefault(k, hit[2]) == hit[2]      # one mix all through a flash
+                lit_flashes.add(k)
+        assert len(lit_flashes) >= int(1.4 * 2 * flashes)
+        assert len(set(seeds.values())) == len(seeds)            # and a new one each flash
+
+
+def test_colour_flip_turns_over_one_or_more_channels():
+    mixes = {events.flip_channels(i / 700) for i in range(700)}
+    assert len(mixes) == 7 and (False, False, False) not in mixes
+    assert events.flip_channels(0.0) == (True, False, False) and events.flip_channels(0.9999) == (True, True, True)
+
+
+def test_colour_flip_turns_over_its_channels(ctx):  # noqa: F811
+    from shardloom.renderer import Renderer
+
+    r = Renderer(ctx, W, H, Frames())
+    voice = Voice(0, 0, 0, 0.0, 99.0, 1.0, False, 0, {})
+
+    def picture(hits):
+        st = FrameState(0.5, 0, 0, [LaneState(voice, 0, {}, 1.0, "normal")], {}, ["#000000", "#808080", "#ffffff"], {}, hits)
+        r.render(st)
+        r.render(st)
+        return r.read().astype(int)
+
+    plain = picture({})
+    for m in range(1, 8):
+        sd = (m - 0.5) / 7
+        on = events.flip_channels(sd)
+        img = picture({"flip": (1.0, 0.3, sd)})
+        for ch in range(3):
+            want = 255 - plain[..., ch] if on[ch] else plain[..., ch]
+            assert np.abs(img[..., ch] - want).max() <= 2, (m, ch)
+
+
+def test_the_kaleidoscope_leaves_get_their_own_colours():
+    e = layered({}, lanes=1)
+    e.project.shard_fx = {"mirror": {"leaves": 0.6, "beat": True}}
+    e.events.fire("mirror", 1.0)
+    got = [struck(e, "mirror", t)[0] for t in np.arange(1.02, 4.9, 0.02)]
+    assert all(s["fold_leaves"] == 0.6 for s in got)
+    assert len({s["fold_seed"] for s in got}) >= 6                # new colours on each beat
+    e.project.shard_fx["mirror"]["beat"] = False
+    assert len({struck(e, "mirror", t)[0]["fold_seed"] for t in np.arange(1.02, 4.9, 0.1)}) == 1
+    e.project.shard_fx = {"mirror": {}}
+    assert struck(e, "mirror", 2.0)[0]["fold_leaves"] == 0.0      # off unless asked: old projects look the same
+
+
+def test_each_leaf_is_turned_over_differently(ctx):  # noqa: F811
+    from shardloom.renderer import Renderer
+
+    r = Renderer(ctx, W, H, Frames())
+    voice = Voice(0, 0, 0, 0.0, 99.0, 1.0, False, 0, {})
+
+    def folded(**kw):
+        s = {"fold": 1.0, "fold_style": 0.0, "fold_segments": 6.0, "fold_zoom": 0.0, "fold_turn": 0.0,
+             "fold_seed": 0.3, **kw}
+        return lane_picture(r, [LaneState(voice, 0, {}, 1.0, "normal", s)])
+
+    m = folded()
+    assert np.abs(m - m[:, ::-1]).mean() < 3
+    tinted = folded(fold_leaves=1.0)
+    assert np.abs(tinted - m).mean() > 10
+    assert np.abs(tinted - tinted[:, ::-1]).mean() > 10           # the two leaves differ in colour
+    assert np.abs(folded(fold_leaves=1.0, fold_seed=0.7) - tinted).mean() > 5
+    k = folded(fold_style=2.0, fold_leaves=1.0)
+    hues = {tuple(k[y, x] // 32) for y, x in [(H // 2 + int(H * 0.3 * math.sin(a)), W // 2 + int(H * 0.3 * math.cos(a)))
+                                                 for a in np.arange(0.1, math.tau, math.tau / 12)]}
+    assert len(hues) >= 6                                         # twelve leaves, many colours

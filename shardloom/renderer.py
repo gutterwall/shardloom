@@ -13,7 +13,8 @@ from . import shaders
 from .sequencer import FrameState
 
 # The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layer_strikes).
-LAYER_UNIFORMS = ("lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn")
+LAYER_UNIFORMS = ("lens", "fold", "fold_style", "fold_segments", "fold_zoom", "fold_turn", "fold_leaves",
+                  "fold_seed")
 
 
 def headless_context() -> moderngl.Context:
