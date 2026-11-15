@@ -10,7 +10,12 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: effects on single layers
+## New in this version: Colour flip and leaf colours
+
+- **Colour flip** (Shard effects → Colour): a strobe that flashes in time with the beat (1, 2 or 4 **flashes** a beat), and each flash turns over one or more of the red, green and blue channels, a new mix each time.
+- **Leaf colours** on the **Mirror**: each leaf of the mirror, quad mirror or kaleidoscope turns over its own share of red, green and blue, so every leaf has a different colour, with new colours on each beat when **on the beat** is ticked. It is off unless you turn it up, so existing projects look the same.
+
+## Effects on single layers (0.7)
 
 A **One layer** group on the Shard effects page, on the desktop and on phones:
 
