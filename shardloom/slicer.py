@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .media import VideoDecoder
+from .media import Decoders
 
 POOL_FILE = "pool.json"
 
@@ -74,6 +74,36 @@ def scores(frames: np.ndarray) -> tuple[float, float]:
     return motion, brightness
 
 
+def write_shard(path: str | os.PathLike, frames, count: int, height: int, width: int) -> tuple[int, float, float]:
+    """Writes count frames (an iterable of uint8 height x width x 3) to a .npy file as they come, scoring
+    them on the way, so a shard is never all in memory. Returns (frames, motion, brightness) as scores()."""
+    path = Path(path)
+    shape = (height, width, 3)
+    bright = motion = 0.0
+    prev = None
+    n = 0
+    with open(path, "wb") as f:
+        np.lib.format.write_array_header_1_0(f, {"descr": np.dtype(np.uint8).str, "fortran_order": False,
+                                                 "shape": (count,) + shape})
+        for frame in frames:
+            if n >= count:
+                break
+            frame = np.ascontiguousarray(frame, dtype=np.uint8)
+            if frame.shape != shape:
+                raise ValueError(f"shard frame {frame.shape}, expected {shape}")
+            f.write(frame.data)
+            small = frame[::8, ::8].astype(np.float32) / 255.0
+            bright += float(small.mean())
+            if prev is not None:
+                motion += float(np.abs(small - prev).mean())
+            prev = small
+            n += 1
+    if n != count:
+        path.unlink(missing_ok=True)
+        raise ValueError(f"{path.name}: got {n} frames, expected {count}")
+    return n, (motion / (n - 1) if n > 1 else 0.0), bright / n
+
+
 def slice_videos(sources: list[str | os.PathLike], pool_dir: str | os.PathLike, count: int = 48,
                  min_len: float = 0.25, max_len: float = 1.5, width: int = 640, height: int = 360,
                  fps: float = 30.0, seed: int | None = None, overlap: bool = False, append: bool = False,
@@ -83,26 +113,23 @@ def slice_videos(sources: list[str | os.PathLike], pool_dir: str | os.PathLike, 
     pool_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
     existing = load_pool(pool_dir) if append and (pool_dir / POOL_FILE).exists() else []
-    decoders = []
+    decoders = Decoders(sources, width, height, fps)
     try:
-        for s in sources:
-            decoders.append(VideoDecoder(s, width, height, fps))
-        cuts = plan_cuts([d.duration for d in decoders], count, min_len, max_len, rng, overlap)
+        cuts = plan_cuts(decoders.durations, count, min_len, max_len, rng, overlap)
         shards = list(existing)
         next_id = max((s.id for s in existing), default=-1) + 1
         for n, (src, start, length) in enumerate(cuts):
-            frames = decoders[src].segment(start, length)
+            d = decoders[src]
             name = f"{next_id:04d}.npy"
-            np.save(pool_dir / name, frames)
-            motion, brightness = scores(frames)
-            shards.append(Shard(next_id, name, str(Path(sources[src]).resolve()), start, length, len(frames),
+            n_frames, motion, brightness = write_shard(pool_dir / name, d.iter_segment(start, length),
+                                                       d.segment_length(length), height, width)
+            shards.append(Shard(next_id, name, str(Path(sources[src]).resolve()), start, length, n_frames,
                                 motion, brightness))
             next_id += 1
             if progress:
                 progress(n + 1, len(cuts))
     finally:
-        for d in decoders:
-            d.close()
+        decoders.close()
     rank_energy(shards)
     save_pool(pool_dir, shards, width, height, fps)
     return shards
