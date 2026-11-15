@@ -10,7 +10,13 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: shards take a fraction of the space
+## New in this version: Cut shards when you ask, and cancel it
+
+- **Opening a project no longer cuts shards by itself.** A project without shards (a new one, a packed one, or one whose `pool` folder was removed) opens straight away and waits for you to press **Cut shards**. A big project used to go straight into a long cut every time it opened.
+- **Cut shards can be cancelled.** While it cuts, the button becomes **Cancel**: it stops at once, removes the half-cut shards and keeps the ones you had. Closing the project also stops its cut.
+- The size shown beside the button now allows for the compressed shards from 0.9.0 (it was about 60 times too high).
+
+## Shards take a fraction of the space (0.9.0)
 
 - **Shards are stored as small videos.** The pool used to keep every frame of every shard raw, about 2.7 MB a frame at 720p, so a big pool could fill tens of gigabytes. Each shard is now a short H.264 video (`pool/0000.mp4`, …) with every frame a keyframe: 50 to 70 times smaller, and shards still play from any frame, at any speed and backwards. 40 shards of 720p phone footage take 53 MB instead of 2.9 GB.
 - **Cutting shards uses far less memory.** Shards are cut a frame at a time, with one video open at a time, so a project with dozens of 1080p videos cut at 60 fps no longer runs out of memory (one long 1080p shard went from 3.3 GB to 0.2 GB).
