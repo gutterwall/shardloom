@@ -22,9 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .media import VideoDecoder, probe
+from .media import Decoders, VideoDecoder, probe
 from .sequencer import PROJECT_FILE, Project, Source, project_path
-from .slicer import POOL_FILE, Shard, plan_cuts, rank_energy, save_pool, scores
+from .slicer import POOL_FILE, Shard, plan_cuts, rank_energy, save_pool, write_shard
 
 MEDIA = "media"
 POOL = "pool"
@@ -203,8 +203,11 @@ def cover_box(sw: int, sh: int, width: int, height: int, zoom: float = 1.0, cx: 
     return (x0, y0, min(sw, x0 + bw), min(sh, y0 + bh))
 
 
-def photo_frames(img, width: int, height: int, frames: int, motion: str, rng: random.Random) -> np.ndarray:
-    """A shard from a photo: one frame when still, otherwise a slow zoom or pan over frames."""
+def photo_shard(img, width: int, height: int, frames: int, motion: str, rng: random.Random):
+    """A shard from a photo: one frame when still, otherwise a slow zoom or pan over frames.
+
+    Returns (frame count, the frames one at a time). The random choices are made now, in the same order
+    as always, so the same seed makes the same shards; the frames are made as they are taken."""
     from PIL import Image
 
     if motion == "random":
@@ -212,21 +215,22 @@ def photo_frames(img, width: int, height: int, frames: int, motion: str, rng: ra
     sw, sh = img.size
     if motion == "still" or frames <= 1:
         box = cover_box(sw, sh, width, height)
-        return np.asarray(img.resize((width, height), Image.Resampling.LANCZOS, box=box))[None]
+        return 1, iter([np.asarray(img.resize((width, height), Image.Resampling.LANCZOS, box=box))])
     cx, cy = rng.uniform(0.4, 0.6), rng.uniform(0.4, 0.6)
     direction = rng.choice([-1, 1])
-    out = np.empty((frames, height, width, 3), np.uint8)
-    for k in range(frames):
-        f = k / max(1, frames - 1)
-        f = f * f * (3 - 2 * f)
-        if motion == "zoom_in":
-            box = cover_box(sw, sh, width, height, 1.0 + 0.15 * f, cx, cy)
-        elif motion == "zoom_out":
-            box = cover_box(sw, sh, width, height, 1.15 - 0.15 * f, cx, cy)
-        else:
-            box = cover_box(sw, sh, width, height, 1.12, 0.5 + direction * (f - 0.5) * 0.5, cy)
-        out[k] = np.asarray(img.resize((width, height), Image.Resampling.BILINEAR, box=box))
-    return out
+
+    def make():
+        for k in range(frames):
+            f = k / max(1, frames - 1)
+            f = f * f * (3 - 2 * f)
+            if motion == "zoom_in":
+                box = cover_box(sw, sh, width, height, 1.0 + 0.15 * f, cx, cy)
+            elif motion == "zoom_out":
+                box = cover_box(sw, sh, width, height, 1.15 - 0.15 * f, cx, cy)
+            else:
+                box = cover_box(sw, sh, width, height, 1.12, 0.5 + direction * (f - 0.5) * 0.5, cy)
+            yield np.asarray(img.resize((width, height), Image.Resampling.BILINEAR, box=box))
+    return frames, make()
 
 
 # ---- the pool -------------------------------------------------------------
@@ -272,46 +276,46 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
     shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True)
     shards: list[Shard] = []
-    decoders = []
+    decoders = None
     try:
-        for s in videos:
-            decoders.append(VideoDecoder(project_path(directory, s.path), width, height, fps))
+        decoders = Decoders([project_path(directory, s.path) for s in videos], width, height, fps)
         spans = []
-        for s, d in zip(videos, decoders):
-            start = min(max(0.0, s.start), d.duration)
-            end = d.duration if s.end is None else min(max(s.end, start), d.duration)
+        for s, duration in zip(videos, decoders.durations):
+            start = min(max(0.0, s.start), duration)
+            end = duration if s.end is None else min(max(s.end, start), duration)
             spans.append((start, end - start))
         cuts = plan_cuts([length for _, length in spans], int(cut.get("count", 48)) if videos else 0,
                          min_len, max_len, rng, weights=[s.weight for s in videos])
         total = len(cuts) + sum(max(1, p.shards) for p in photos)
         done = 0
 
-        def add(frames: np.ndarray, src: Source, start: float, length: float) -> None:
+        def add(count: int, frames, src: Source, start: float, length: float) -> None:
+            # Straight to disk a frame at a time: a long, large shard is never all in memory.
             nonlocal done
             sid = len(shards)
             name = f"{sid:04d}.npy"
-            np.save(tmp_dir / name, frames)
-            motion, brightness = scores(frames)
-            shards.append(Shard(sid, name, str(project_path(directory, src.path)), start, length, len(frames),
+            n_frames, motion, brightness = write_shard(tmp_dir / name, frames, count, height, width)
+            shards.append(Shard(sid, name, str(project_path(directory, src.path)), start, length, n_frames,
                                 motion, brightness, source_id=src.id))
             done += 1
             if progress:
                 progress(done, total)
 
         for vi, start, length in cuts:
-            add(decoders[vi].segment(spans[vi][0] + start, length), videos[vi], spans[vi][0] + start, length)
+            d = decoders[vi]
+            add(d.segment_length(length), d.iter_segment(spans[vi][0] + start, length), videos[vi],
+                spans[vi][0] + start, length)
         for p in photos:
             img = load_photo(project_path(directory, p.path))
             for _ in range(max(1, p.shards)):
                 length = rng.uniform(min_len, max_len)
-                frames = photo_frames(img, width, height, max(1, int(round(length * fps))), p.motion, rng)
-                add(frames, p, 0.0, length)
+                add(*photo_shard(img, width, height, max(1, int(round(length * fps))), p.motion, rng), p, 0.0, length)
     except BaseException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
     finally:
-        for d in decoders:
-            d.close()
+        if decoders is not None:
+            decoders.close()
     rank_energy(shards)
     save_pool(tmp_dir, shards, width, height, fps)
     meta = json.loads((tmp_dir / POOL_FILE).read_text())

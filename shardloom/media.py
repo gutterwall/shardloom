@@ -68,8 +68,20 @@ class VideoDecoder:
         return np.ascontiguousarray(img[y0:y0 + self.height, x0:x0 + self.width])
 
     def segment(self, start: float, duration: float) -> np.ndarray:
-        """Frames from start for duration seconds: uint8 array (frames, height, width, 3)."""
-        count = max(1, int(round(duration * self.fps)))
+        """Frames from start for duration seconds: uint8 array (frames, height, width, 3).
+
+        For short segments only: it holds them all. iter_segment() gives them one at a time."""
+        return np.stack(list(self.iter_segment(start, duration)))
+
+    def segment_length(self, duration: float) -> int:
+        """How many frames iter_segment() gives for duration seconds."""
+        return max(1, int(round(duration * self.fps)))
+
+    def iter_segment(self, start: float, duration: float):
+        """The frames of segment(), one at a time (uint8, height x width x 3), holding only the current one.
+
+        A frame shown more than once (a source slower than the project) comes as the same array again."""
+        count = self.segment_length(duration)
         tb = self.stream.time_base
         try:
             self.container.seek(int(start / tb), stream=self.stream, backward=True, any_frame=False)
@@ -79,31 +91,75 @@ class VideoDecoder:
         # latest source frame at or before its time.
         targets = [start + k / self.fps for k in range(count)]
         eps = 0.25 / self.fps
-        frames: list = []
+        given = 0
         prev = None
-        try:
-            for frame in self.container.decode(self.stream):
-                if frame.pts is None:
-                    continue
-                t = float(frame.pts * tb)
-                # Every target this frame comes after shows the frame before it.
-                while len(frames) < count and t > targets[len(frames)] + eps:
-                    frames.append(prev if prev is not None else frame)
-                if len(frames) >= count:
-                    break
-                prev = frame
-        except av.error.FFmpegError as e:
-            raise MediaError(f"{self.path}: {e}") from e
-        if prev is None and not frames:
+        shown = (None, None)          # the last source frame given, and its RGB
+        decoded = self.container.decode(self.stream)
+
+        def rgb(frame):
+            nonlocal shown
+            if shown[0] is not frame:
+                shown = (frame, self._rgb(frame))
+            return shown[1]
+
+        while given < count:
+            try:
+                frame = next(decoded, None)
+            except av.error.FFmpegError as e:
+                raise MediaError(f"{self.path}: {e}") from e
+            if frame is None:
+                break
+            if frame.pts is None:
+                continue
+            t = float(frame.pts * tb)
+            # Every target this frame comes after shows the frame before it.
+            while given < count and t > targets[given] + eps:
+                yield rgb(prev if prev is not None else frame)
+                given += 1
+            if given >= count:
+                break
+            prev = frame
+        if prev is None and given == 0:
             raise MediaError(f"{self.path}: no frames at {start:.2f}s")
-        while len(frames) < count:
-            frames.append(prev if prev is not None else frames[-1])
-        # Convert each distinct source frame once.
-        converted: dict[int, np.ndarray] = {}
-        return np.stack([converted.setdefault(id(f), self._rgb(f)) for f in frames])
+        while given < count:
+            yield rgb(prev if prev is not None else shown[0])
+            given += 1
 
     def close(self) -> None:
         self.container.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class Decoders:
+    """VideoDecoders for several videos, with only one open at a time.
+
+    A decoder that has been used holds about 100 MB of frames (for 1080p), so a pool cut from dozens of
+    videos with all of them open runs out of memory. Each file is checked and its length read up front."""
+
+    def __init__(self, paths, width: int, height: int, fps: float):
+        self.paths = [str(p) for p in paths]
+        self.size = (width, height, fps)
+        self.durations = []
+        for p in self.paths:
+            with VideoDecoder(p, width, height, fps) as d:
+                self.durations.append(d.duration)
+        self._open: tuple[int, VideoDecoder] | None = None
+
+    def __getitem__(self, i: int) -> VideoDecoder:
+        if self._open is None or self._open[0] != i:
+            self.close()
+            self._open = (i, VideoDecoder(self.paths[i], *self.size))
+        return self._open[1]
+
+    def close(self) -> None:
+        if self._open is not None:
+            self._open[1].close()
+            self._open = None
 
     def __enter__(self):
         return self
