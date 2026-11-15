@@ -4,7 +4,7 @@ import random
 import numpy as np
 import pytest
 
-from shardloom.slicer import PoolFrames, plan_cuts, slice_videos
+from shardloom.slicer import PoolFrames, load_shard, plan_cuts, slice_videos
 
 
 def test_cuts_stay_inside_sources_and_do_not_overlap():
@@ -41,7 +41,7 @@ def test_slice_videos_writes_a_pool(tmp_path, videos):
     assert (data["width"], data["height"], data["fps"]) == (160, 90, 30)
     pool = PoolFrames(tmp_path / "pool")
     for s in shards:
-        frames = np.load(tmp_path / "pool" / s.file)
+        frames = load_shard(tmp_path / "pool" / s.file)
         assert frames.shape[1:] == (90, 160, 3) and frames.dtype == np.uint8
         assert len(frames) == s.frames == pytest.approx(s.duration * 30, abs=1)
         assert pool.frame(s.id, len(frames) + 1).shape == (90, 160, 3)
@@ -73,22 +73,71 @@ def test_a_shard_is_written_a_frame_at_a_time(tmp_path):
             yield np.roll(base, 3 * k, axis=1)
 
     tracemalloc.start()
-    n, motion, brightness = write_shard(tmp_path / "s.npy", frames(), 120, 360, 640)
+    n, motion, brightness = write_shard(tmp_path / "s.mp4", frames(), 120, 360, 640)
     peak = tracemalloc.get_traced_memory()[1]
     tracemalloc.stop()
     assert peak < 8_000_000                                  # a few frames, not 83 MB
-    saved = np.load(tmp_path / "s.npy")
     want = np.stack(list(frames()))
-    assert n == 120 and np.array_equal(saved, want)          # the same file np.save would write
+    assert n == 120 and load_shard(tmp_path / "s.mp4").shape == want.shape
+    # Scored from the frames given, not the compressed copy.
     assert (motion, brightness) == pytest.approx(scores(want), rel=1e-6)
+
+
+def smooth_frames(count, h=180, w=320):
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    for k in range(count):
+        img = np.stack([xx / w * 255, yy / h * 255, (np.sin((xx + 4 * k) / 20) + 1) * 127], axis=-1)
+        yield img.astype(np.uint8)
+
+
+def test_a_shard_is_compressed_and_close_to_its_frames(tmp_path):
+    from shardloom.slicer import write_shard
+
+    want = np.stack(list(smooth_frames(30)))
+    write_shard(tmp_path / "s.mp4", iter(want), 30, 180, 320)
+    assert (tmp_path / "s.mp4").stat().st_size < want.nbytes / 20
+    got = load_shard(tmp_path / "s.mp4")
+    assert np.abs(got.astype(int) - want).mean() < 3
+
+
+def test_pool_frames_play_from_any_frame(tmp_path):
+    from shardloom.slicer import Shard, save_pool, write_shard
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    want = np.stack(list(smooth_frames(12, 36, 64)))
+    write_shard(pool / "0000.mp4", iter(want), 12, 36, 64)
+    save_pool(pool, [Shard(0, "0000.mp4", "src", 0.0, 0.4, 12)], 64, 36, 30)
+    # Room for 3 decoded frames: frames are dropped and decoded again as needed.
+    frames = PoolFrames(pool, frame_bytes=3 * want[0].nbytes)
+    assert frames.length(0) == 12
+    for i in [11, 0, 5, 4, 3, 17, -1, 5]:                   # backwards, jumps, wrapping
+        img = frames.frame(0, i)
+        assert img.shape == (36, 64, 3) and not img.flags.writeable
+        assert np.abs(img.astype(int) - want[i % 12]).mean() < 4
+    assert len(frames._decoded) <= 3
+    frames.close()
+    (pool / "0000.mp4").unlink()                             # nothing is held open
+
+
+def test_old_npy_pools_still_play(tmp_path):
+    from shardloom.slicer import Shard, save_pool
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    want = np.stack(list(smooth_frames(5, 36, 64)))
+    np.save(pool / "0000.npy", want)
+    save_pool(pool, [Shard(0, "0000.npy", "src", 0.0, 0.2, 5)], 64, 36, 30)
+    frames = PoolFrames(pool)
+    assert frames.length(0) == 5 and np.array_equal(frames.frame(0, 7), want[2])
 
 
 def test_a_short_shard_is_refused(tmp_path):
     from shardloom.slicer import write_shard
 
     with pytest.raises(ValueError):
-        write_shard(tmp_path / "s.npy", iter([np.zeros((4, 4, 3), np.uint8)] * 3), 5, 4, 4)
-    assert not (tmp_path / "s.npy").exists()
+        write_shard(tmp_path / "s.mp4", iter([np.zeros((16, 16, 3), np.uint8)] * 3), 5, 16, 16)
+    assert not (tmp_path / "s.mp4").exists()
 
 
 def test_frames_one_at_a_time_match_the_segment(videos):

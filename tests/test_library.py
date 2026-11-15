@@ -9,7 +9,7 @@ from PIL import Image
 from shardloom import formats, library
 from shardloom.analysis import analyse_samples
 from shardloom.sequencer import Engine, Lane, Pattern, Project, Source, Step, Title, starter_project
-from shardloom.slicer import PoolFrames
+from shardloom.slicer import PoolFrames, load_shard
 
 from conftest import click_track
 
@@ -57,7 +57,7 @@ def test_build_pool_from_videos_and_photos(tmp_path, videos, photo, song):
     assert len(photo_shards) == 2
     pool = PoolFrames(d / "pool")
     assert pool.width == 64 and pool.height == 36
-    frames = np.load(d / "pool" / photo_shards[0].file)
+    frames = load_shard(d / "pool" / photo_shards[0].file)
     assert frames.shape[1:] == (36, 64, 3) and len(frames) > 1     # zooming: more than one frame
     # Red on the left, blue on the right survives the cover crop.
     assert frames[0, 18, 4, 0] > 150 and frames[0, 18, 60, 2] > 150
@@ -69,10 +69,10 @@ def test_build_pool_from_videos_and_photos(tmp_path, videos, photo, song):
 def test_the_same_recipe_cuts_the_same_pool(tmp_path, videos, photo, song):
     d, p = project_with(tmp_path, videos, photo, song)
     first = [(s.source_id, s.start, s.duration, s.frames) for s in library.build_pool(p, d, 64, 36)]
-    a = np.load(d / "pool" / "0000.npy")
+    a = load_shard(d / "pool" / "0000.mp4")
     second = [(s.source_id, s.start, s.duration, s.frames) for s in library.build_pool(p, d, 64, 36)]
     assert first == second
-    assert np.array_equal(a, np.load(d / "pool" / "0000.npy"))
+    assert np.array_equal(a, load_shard(d / "pool" / "0000.mp4"))
 
 
 def test_trim_and_weight(tmp_path, videos, photo, song):
@@ -130,7 +130,7 @@ def test_save_as_and_pack_and_unpack_rebuild(tmp_path, videos, photo, song):
     rebuilt = library.build_pool(q, out, 64, 36)
     original = json.loads((d / "pool" / "pool.json").read_text())["shards"]
     assert [(s.start, s.duration, s.frames) for s in rebuilt] == [(s["start"], s["duration"], s["frames"]) for s in original]
-    assert np.array_equal(np.load(out / "pool" / "0001.npy"), np.load(d / "pool" / "0001.npy"))
+    assert (out / "pool" / "0001.mp4").read_bytes() == (d / "pool" / "0001.mp4").read_bytes()
 
 
 def test_unpack_refuses_paths_outside(tmp_path):

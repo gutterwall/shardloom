@@ -65,7 +65,7 @@ class Session:
 
     def close(self) -> None:
         """Lets go of the pool's files (so they can be replaced, on Windows too)."""
-        self.pool._frames.clear()
+        self.pool.close()
 
 
 def cmd_new(args) -> None:
