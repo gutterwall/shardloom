@@ -30,6 +30,8 @@ uniform float fold_style;    // 0 mirror, 1 quad, 2 kaleidoscope
 uniform float fold_segments; // kaleidoscope segments
 uniform float fold_zoom;     // > 0 zooms in from the middle, < 0 brings mirrored copies in from the edges
 uniform float fold_turn;     // radians
+uniform float fold_leaves;   // 0..1: how far each leaf turns over its own mix of red, green and blue
+uniform float fold_seed;     // the leaves' colours
 in vec2 uv;
 out vec4 color;
 
@@ -52,19 +54,23 @@ vec3 hue_rotate(vec3 c, float a) {
     return toRGB * vec3(yiq.x, chroma * cos(h), chroma * sin(h));
 }
 
-// Where the mirror / kaleidoscope reads the picture for point p.
-vec2 folded(vec2 p, float aspect) {
+// Where the mirror / kaleidoscope reads the picture for point p, and which leaf of it p is in.
+vec2 folded(vec2 p, float aspect, out float leaf) {
     vec2 q = (p - 0.5) * vec2(aspect, 1.0);
     q = fold_zoom >= 0.0 ? q / (1.0 + 1.5 * fold_zoom) : q * (1.0 - 1.5 * fold_zoom);
     float cs = cos(fold_turn), sn = sin(fold_turn);
     q = mat2(cs, sn, -sn, cs) * q;
     if (fold_style < 0.5) {
+        leaf = q.x < 0.0 ? 1.0 : 0.0;
         q.x = abs(q.x);
     } else if (fold_style < 1.5) {
+        leaf = (q.x < 0.0 ? 1.0 : 0.0) + (q.y < 0.0 ? 2.0 : 0.0);
         q = abs(q);
     } else {
         float wedge = 6.2831853 / max(fold_segments, 2.0);
-        float a = mod(atan(q.y, q.x), wedge);
+        float at = mod(atan(q.y, q.x), 6.2831853);
+        float a = mod(at, wedge);
+        leaf = floor(at / wedge) * 2.0 + (a > wedge * 0.5 ? 1.0 : 0.0);   // each segment is two mirrored leaves
         a = abs(a - wedge * 0.5);
         q = vec2(cos(a), sin(a)) * length(q);
     }
@@ -112,7 +118,17 @@ void main() {
     } else {
         c = fetch(p);
     }
-    if (fold > 0.0) c = mix(c, fetch(folded(p, aspect)), fold);
+    if (fold > 0.0) {
+        float leaf;
+        vec3 f = fetch(folded(p, aspect, leaf));
+        if (fold_leaves > 0.0) {
+            // Each leaf turns its channels over by its own amounts: its own colour.
+            vec3 w = vec3(hash(vec2(leaf, fold_seed * 97.0)), hash(vec2(leaf + 31.0, fold_seed * 97.0)),
+                          hash(vec2(leaf + 67.0, fold_seed * 97.0)));
+            f = mix(f, 1.0 - f, w * fold_leaves);
+        }
+        c = mix(c, f, fold);
+    }
 
     if (hue > 0.0) c = hue_rotate(c, hue * 6.2831853);
     float lum = dot(c, vec3(0.299, 0.587, 0.114));
@@ -213,14 +229,15 @@ uniform sampler2D tex;       // the picture so far
 uniform sampler2D prev;      // the last finished frame, for datamosh
 uniform vec2 res;
 uniform float time;
-uniform float amt[16];
-uniform float age[16];
-uniform float sd[16];
+uniform float amt[17];
+uniform float age[17];
+uniform float sd[17];
 in vec2 uv;
 out vec4 color;
 
 const int DATAMOSH = 0, PIXEL_SORT = 1, CORRUPT = 2, TEAR = 3, VHS = 4, CRT = 5, ROLL = 6, BLEED = 7,
-          BURN = 8, LEAK = 9, DAMAGE = 10, FIREWORKS = 11, EXPLOSION = 12, HUE = 13, BRIGHT = 14, SAT = 15;
+          BURN = 8, LEAK = 9, DAMAGE = 10, FIREWORKS = 11, EXPLOSION = 12, HUE = 13, BRIGHT = 14, SAT = 15,
+          FLIP = 16;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float hash1(float x) { return fract(sin(x * 91.3458 + 3.17) * 47453.5453); }
@@ -523,6 +540,13 @@ void main() {
         c += vec3(1.0, 0.75, 0.5) * exp(-pow(ringd / 0.015, 2.0)) * (1.0 - g) * 0.6 * a;
         c += sparks(q + boom, boom, g * 1.2, sd[EXPLOSION] * 7.0, vec3(1.0, 0.55, 0.15), 0.45, 32) * a;
         c += vec3(1.0, 0.9, 0.75) * max(0.0, 1.0 - g * 9.0) * 0.9 * a;                     // the flash
+    }
+    a = amt[FLIP];
+    if (a > 0.0) {
+        // One or more channels turned over (events.flip_channels).
+        int m = 1 + min(6, int(sd[FLIP] * 7.0));
+        vec3 on = vec3(float(m & 1), float((m >> 1) & 1), float((m >> 2) & 1));
+        c = mix(c, mix(c, 1.0 - clamp(c, 0.0, 1.0), on), a);
     }
     color = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

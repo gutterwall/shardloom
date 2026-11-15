@@ -950,11 +950,22 @@ function MirrorOptions({ s, save }) {
       on=${v => set("zoom", v)} /></${Field}>
     ${s.zoom !== "none" && html`<${Slider} label="zoom depth" value=${s.depth}
       on=${v => set("depth", Math.round(v * 1000) / 1000)} />`}
+    <${Slider} label="leaf colours" value=${s.leaves ?? 0} fmt=${v => (v <= 0 ? "off" : v.toFixed(2))}
+      on=${v => set("leaves", Math.round(v * 1000) / 1000)}
+      title="Each leaf turns over its own share of red, green and blue, so every leaf has a different colour." />
     <${Slider} label="layers" value=${Math.min(s.layers, n)} min=${1} max=${n} step=${1} fmt=${v => v}
       on=${v => set("layers", v)} title="How many layers each strike folds." />
     <${Check} label="On the beat" value=${!!s.beat} on=${v => set("beat", v)} />
     <p class="faint">On the beat: the zoom punches in on every beat and the pattern turns a notch each beat.
       Off: it zooms and turns smoothly through the strike.</p>`;
+}
+
+// Colour flip's own setting, under its sliders.
+function FlipOptions({ s, save }) {
+  return html`
+    <${Field} label="flashes"><${Select} value=${String(s.flashes)}
+      options=${eventlib.FLASHES.map(f => [String(f), `${f} ${f === 1 ? "flash" : "flashes"} a beat`])}
+      on=${v => { s.flashes = Number(v); save(); }} /></${Field}>`;
 }
 
 function EffectsPanel() {
@@ -987,6 +998,7 @@ function EffectsPanel() {
           <${Slider} label="pulse" value=${s.sync} min=${-1} max=${1} fmt=${syncLabel} on=${v => set("sync", v)}
             title="Left: strikes between the beats. Middle: anywhere. Right: on the beats and hits." />
           <${Slider} label="strength" value=${s.strength} on=${v => set("strength", v)} />
+          ${name === "flip" && html`<${FlipOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
           ${name === "mirror" && html`<${MirrorOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
         </div>`;
       })}`)}

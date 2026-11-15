@@ -182,7 +182,8 @@ def test_sequencer_matches(page, analysed):
 def test_shard_effects_and_timing_match(page, analysed):
     p = starter_project("", "pool", 3, seed=5)
     p.shard_fx = {"fireworks": {"rate": 0.8, "sync": 1.0, "strength": 0.9}, "tear": {"rate": 0.6, "sync": -1.0},
-                  "hue_shift": {"rate": 0.7}, "brightness": {"rate": 0.9, "strength": 0.5}}
+                  "hue_shift": {"rate": 0.7}, "brightness": {"rate": 0.9, "strength": 0.5},
+                  "flip": {"rate": 0.7, "sync": 1.0, "flashes": 4}}
     p.pace = {**pacelib.default_pace(), "on": True, "weights": [0, 1, 1, 1, 1, 1, 1], "tilt": 0.3, "repeats": 3}
     p.palette_mode = "bars"
     p.palette_bars = 1
@@ -193,7 +194,8 @@ def test_lens_and_mirror_match(page, analysed):
     p = starter_project("", "pool", 4, seed=7)
     p.lanes[2].mute = True
     p.shard_fx = {"lens": {"rate": 0.9, "sync": 1.0, "strength": 0.8},
-                  "mirror": {"rate": 0.8, "style": "quad", "zoom": "edges", "depth": 0.7, "layers": 2, "beat": True}}
+                  "mirror": {"rate": 0.8, "style": "quad", "zoom": "edges", "depth": 0.7, "layers": 2, "beat": True,
+                             "leaves": 0.6}}
     times = [i * 0.04 for i in range(280)]
     compare_engine(page, analysed, p, times)
     p.shard_fx["mirror"].update({"style": "kaleido", "segments": 7, "zoom": "middle", "beat": False, "layers": 9})
@@ -231,7 +233,8 @@ def test_shaders_compile_and_draw(page):
         const state = {t: 1, step: 4, pattern: 0, palette: m.fx.PALETTES[0], music: {beat_phase: 0.2},
             lanes: [{voice: {shard: 0, step: 4}, frame: 0, fx, opacity: 1, blend: "screen",
                      strike: {lens: 0.7, lens_r: 1, lens_g: 0.2, lens_b: 0.1, fold: 0.8, fold_style: 2,
-                              fold_segments: 6, fold_zoom: -0.4, fold_turn: 1.1}}],
+                              fold_segments: 6, fold_zoom: -0.4, fold_turn: 1.1, fold_leaves: 0.5,
+                              fold_seed: 0.3}}],
             master: {...fx, trails: 0.4, flash: 0.1}, events: all};
         r.render(state);
         const gl = r.gl, px = new Uint8Array(4);

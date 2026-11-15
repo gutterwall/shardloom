@@ -32,7 +32,10 @@ export const EVENTS = {
     "a new random colour each time", 3.0, "fade", "", false, 0.4, true),
   mirror: E("Mirror", "One layer", "Folds layers into mirror images or a kaleidoscope that zooms " +
     "from the middle or the edges, on the beat", 4.0, "flat", "", false, 0.4, true,
-    { style: "kaleido", segments: 6, zoom: "middle", depth: 0.5, layers: 1, beat: true }),
+    { style: "kaleido", segments: 6, zoom: "middle", depth: 0.5, layers: 1, beat: true, leaves: 0 }),
+  // Last, so the effects before it keep their strikes (the index is part of each draw).
+  flip: E("Colour flip", "Colour", "A strobe that turns over one or more of the red, green and blue " +
+    "channels, a new mix on every flash", 1.5, "flat", "", false, 0.4, false, { flashes: 2 }),
 };
 export const NAMES = Object.keys(EVENTS);
 export const PICTURE = NAMES.filter(n => !EVENTS[n].layer);   // the whole-picture ones, in shaders.EVENTS order
@@ -41,6 +44,7 @@ export const GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colo
 
 export const MIRROR_STYLES = ["mirror", "quad", "kaleido"];   // shaders.EFFECTS fold_style 0, 1, 2
 export const MIRROR_ZOOMS = ["middle", "edges", "none"];
+export const FLASHES = [1, 2, 4];                              // Colour flip flashes per beat
 
 export function defaultSetting() {
   return { rate: 0, sync: 0, strength: 0.7 };
@@ -81,6 +85,21 @@ export function pickLayers(project, name, seed, count) {
   return lanes.slice(0, Math.max(1, count));
 }
 
+// Which of red, green and blue a Colour flip flash with this seed turns over (as shaders.EVENTS).
+export function flipChannels(sd) {
+  const m = 1 + Math.min(6, Math.trunc(sd * 7));
+  return [!!(m & 1), !!(m & 2), !!(m & 4)];
+}
+
+// Colour flip at song position beats: [lit now, the seed of this flash], for a strike with seed sd.
+export function strobe(project, beats, sd) {
+  let f = Math.trunc(Number(setting(project, "flip").flashes));
+  if (!FLASHES.includes(f)) f = 2;
+  const phase = beats * f;
+  const k = Math.floor(phase);
+  return [phase - k < 0.5, rand(project.seed, 6007, k, Math.floor(sd * 1e6))];
+}
+
 // layer index -> the shader settings of the One layer effects striking it (see shaders.EFFECTS).
 // hits: Scheduler.at(t); beats: the song position in beats, for the mirror's beat moves.
 export function layerStrikes(project, hits, beats) {
@@ -111,9 +130,12 @@ export function layerStrikes(project, hits, beats) {
     }
     zoom *= { middle: 1, edges: -1 }[s.zoom] ?? 0;
     turn += sd * 2 * Math.PI;
+    const leaves = Math.min(1, Math.max(0, Number(s.leaves ?? 0)));
+    // The leaves' colours: new ones on each beat when on the beat.
+    const leafSeed = s.beat ? pmod(sd + 0.6180339887 * Math.floor(beats), 1) : sd;
     for (const li of pickLayers(project, "mirror", sd, Math.trunc(Number(s.layers)))) {
       put(li, { fold: amount, fold_style: style, fold_segments: segments, fold_zoom: zoom,
-        fold_turn: pmod(turn, 2 * Math.PI) });
+        fold_turn: pmod(turn, 2 * Math.PI), fold_leaves: leaves, fold_seed: leafSeed });
     }
   }
   return out;
@@ -193,7 +215,13 @@ export class Scheduler {
         amount *= ev.bothWays ? 2 * level - 1 : level;
         hit = [hit[0], rand(p.seed, 104729, i)];     // the same direction all through the song
       }
-      if (amount !== 0) out[name] = [amount, age, hit[1]];
+      let sd = hit[1];
+      if (name === "flip") {
+        let lit;
+        [lit, sd] = strobe(p, e.beats(t), sd);
+        if (!lit) return;
+      }
+      if (amount !== 0) out[name] = [amount, age, sd];
     });
     return out;
   }
