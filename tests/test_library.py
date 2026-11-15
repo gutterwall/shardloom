@@ -191,3 +191,24 @@ def test_formats():
     assert formats.pool_size(640, 360, 1080) == (640, 360)        # never above the output
     assert formats.preview_size(3840, 2160) == (960, 540)
     assert 7e6 < formats.bitrate(1920, 1080, 30, "good") < 9e6
+
+
+def test_a_cut_can_be_cancelled_and_keeps_the_old_pool(tmp_path, videos, photo, song):
+    import threading
+
+    d, p = project_with(tmp_path, videos, photo, song)
+    library.build_pool(p, d, 64, 36)
+    before = (d / "pool" / "pool.json").read_text()
+    cancel = threading.Event()
+    seen = []
+
+    def progress(done, total):
+        seen.append(done)
+        cancel.set()                                         # cancel after the first shard
+
+    p.cut["seed"] = 9
+    with pytest.raises(library.Cancelled):
+        library.build_pool(p, d, 64, 36, progress=progress, cancel=cancel)
+    assert seen == [1]                                       # stopped inside the next shard
+    assert not (d / "pool.new").exists()                     # the half-cut pool is removed
+    assert (d / "pool" / "pool.json").read_text() == before  # the old pool is untouched

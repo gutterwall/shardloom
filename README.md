@@ -37,7 +37,7 @@ python3 -m venv .venv
 Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a new project. The window has two workspaces, switched at the top:
 
 **Edit**
-- **Media:** choose the song (WAV, MP3, FLAC, …) and add videos and photos to cut from. For each video, set its share of the cuts and use only part of it (from / to). Each photo becomes one or more shards: still, slow zoom in or out, or a pan. Choose which layers each file plays in. Set the number and length of the shards, the seed and the shard detail, then press **Cut shards**.
+- **Media:** choose the song (WAV, MP3, FLAC, …) and add videos and photos to cut from. For each video, set its share of the cuts and use only part of it (from / to). Each photo becomes one or more shards: still, slow zoom in or out, or a pan. Choose which layers each file plays in. Set the number and length of the shards, the seed and the shard detail, then press **Cut shards**. While it cuts, the button becomes **Cancel**, which stops at once and keeps the shards you had. Shards are cut only when you press the button, never by themselves when a project opens.
 - **Preview:** the finished video, with its titles and fades, in the output's shape.
 - **Timeline:** title cards, titles over the picture and the song section. Click to move the playhead. Drag the blue ends of the song strip to use only part of the song.
 - **Video settings:**
@@ -67,12 +67,12 @@ A project is a folder that keeps a copy of every file it uses, so it can be move
 My video/
   project.json   the edit: media list, cut settings, sequencer, titles, output
   media/         copies of the song, videos, photos and title pictures
-  pool/          the cut shards, as small H.264 videos (rebuilt from media/ when missing)
+  pool/          the cut shards, as small H.264 videos (cut again from media/ with Cut shards)
   analysis.*     the song's beats and loudness (rebuilt when missing)
   renders/       your rendered videos
 ```
 
-The **File** menu can save a copy as a new project, or pack a project into one `.zip` with its media. Opening a `.zip` unpacks it and rebuilds the shards and analysis. The same seed and settings always cut the same shards.
+The **File** menu can save a copy as a new project, or pack a project into one `.zip` with its media. Opening a `.zip` unpacks it and rebuilds the song analysis; press **Cut shards** to cut its shards again. The same seed and settings always cut the same shards.
 
 ## On phones
 
