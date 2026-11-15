@@ -131,7 +131,8 @@ def states(engine, times):
     for t in times:
         st = engine.state(t)
         out.append({"step": st.step, "pattern": st.pattern,
-                    "lanes": [[l.voice.shard if l.voice else None, l.frame, sorted(l.fx.items())] for l in st.lanes],
+                    "lanes": [[l.voice.shard if l.voice else None, l.frame, sorted(l.fx.items()), sorted(l.strike.items())]
+                              for l in st.lanes],
                     "master": sorted(st.master.items()), "palette": st.palette,
                     "events": sorted((k, [round(x, 9) for x in v]) for k, v in st.events.items())})
     return out
@@ -145,7 +146,7 @@ const sorted = o => Object.entries(o).sort(([x], [y]) => (x < y ? -1 : 1));
 return arg.times.map(t => {
   const st = e.state(t);
   return {step: st.step, pattern: st.pattern,
-          lanes: st.lanes.map(l => [l.voice ? l.voice.shard : null, l.frame, sorted(l.fx)]),
+          lanes: st.lanes.map(l => [l.voice ? l.voice.shard : null, l.frame, sorted(l.fx), sorted(l.strike)]),
           master: sorted(st.master), palette: st.palette,
           events: sorted(st.events).map(([k, v]) => [k, v.map(x => Math.round(x * 1e9) / 1e9)])};
 });
@@ -160,10 +161,11 @@ def compare_engine(page, analysed, project: Project, times):
            "shards": [{"id": s.id, "frames": s.frames, "energy": s.energy, "source_id": s.source_id} for s in sh]}
     got = js(page, JS_STATES, arg)
     for w, g, t in zip(want, got, times):
-        g["lanes"] = [[a, b, [tuple(x) for x in c]] for a, b, c in g["lanes"]]
+        g["lanes"] = [[a, b, [tuple(x) for x in c], [tuple(x) for x in d]] for a, b, c, d in g["lanes"]]
         g["master"] = [tuple(x) for x in g["master"]]
         g["events"] = [tuple(x) for x in g["events"]]
-        w["lanes"] = [[a, b, [(k, pytest.approx(v)) for k, v in c]] for a, b, c in w["lanes"]]
+        w["lanes"] = [[a, b, [(k, pytest.approx(v)) for k, v in c], [(k, pytest.approx(v, abs=1e-9)) for k, v in d]]
+                      for a, b, c, d in w["lanes"]]
         w["master"] = [(k, pytest.approx(v)) for k, v in w["master"]]
         w["events"] = [(k, pytest.approx(v, abs=1e-6)) for k, v in w["events"]]
         assert g == w, f"at {t}"
@@ -185,6 +187,18 @@ def test_shard_effects_and_timing_match(page, analysed):
     p.palette_mode = "bars"
     p.palette_bars = 1
     compare_engine(page, analysed, p, [i * 0.04 for i in range(280)])
+
+
+def test_lens_and_mirror_match(page, analysed):
+    p = starter_project("", "pool", 4, seed=7)
+    p.lanes[2].mute = True
+    p.shard_fx = {"lens": {"rate": 0.9, "sync": 1.0, "strength": 0.8},
+                  "mirror": {"rate": 0.8, "style": "quad", "zoom": "edges", "depth": 0.7, "layers": 2, "beat": True}}
+    times = [i * 0.04 for i in range(280)]
+    compare_engine(page, analysed, p, times)
+    p.shard_fx["mirror"].update({"style": "kaleido", "segments": 7, "zoom": "middle", "beat": False, "layers": 9})
+    compare_engine(page, analysed, p, times)
+    assert any(l.strike for t in times for l in Engine(p, shards(), analysed[0]).state(t).lanes)
 
 
 def test_program_matches(page):
@@ -215,7 +229,9 @@ def test_shaders_compile_and_draw(page):
         const all = Object.fromEntries(m.events.NAMES.map(n => [n, [0.8, 0.4, 0.3]]));
         const fx = Object.fromEntries(Object.keys(m.fx.FX).map(n => [n, 0.3]));
         const state = {t: 1, step: 4, pattern: 0, palette: m.fx.PALETTES[0], music: {beat_phase: 0.2},
-            lanes: [{voice: {shard: 0, step: 4}, frame: 0, fx, opacity: 1, blend: "screen"}],
+            lanes: [{voice: {shard: 0, step: 4}, frame: 0, fx, opacity: 1, blend: "screen",
+                     strike: {lens: 0.7, lens_r: 1, lens_g: 0.2, lens_b: 0.1, fold: 0.8, fold_style: 2,
+                              fold_segments: 6, fold_zoom: -0.4, fold_turn: 1.1}}],
             master: {...fx, trails: 0.4, flash: 0.1}, events: all};
         r.render(state);
         const gl = r.gl, px = new Uint8Array(4);

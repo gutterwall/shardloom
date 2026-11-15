@@ -5,7 +5,7 @@ import * as fxlib from "./fx.js";
 import * as pacelib from "./pace.js";
 import { Step } from "./project.js";
 import { rand, pmod, pyround } from "./rand.js";
-import { Scheduler } from "./events.js";
+import { LAYER, Scheduler, layerStrikes } from "./events.js";
 
 export class Engine {
   // shards: [{id, frames, energy, source_id}], analysis: an Analysis.
@@ -296,6 +296,8 @@ export class Engine {
       mods[scope] = mods[scope] || {};
       mods[scope][name] = (mods[scope][name] || 0) + m.amount * (music[m.source] || 0);
     }
+    const hits = this.events.at(t);
+    const strikes = LAYER.some(n => n in hits) ? layerStrikes(p, hits, this.beats(t)) : {};
     const lanes = p.lanes.map((lane, li) => {
       let voice = null;
       const vs = this._voices[li] || [];
@@ -309,12 +311,13 @@ export class Engine {
         frame = pmod(voice.reverse ? voice.start - n : voice.start + n, Math.max(1, length));
       }
       const fx = fxlib.add(lane.fx, voice ? voice.fx : {}, mods.all, mods[`lane${li}`]);
-      return { voice: lane.mute ? null : voice, frame, fx, opacity: lane.opacity, blend: lane.blend };
+      return { voice: lane.mute ? null : voice, frame, fx, opacity: lane.opacity, blend: lane.blend,
+        strike: strikes[li] || {} };
     });
     const master = fxlib.add(p.master_fx, mods.master, this.punchAt(t));
     const bar = Math.floor(Math.max(0, this.beats(t)) / 4);
     const palette = p.palettes.length ? p.palettes[this.paletteIndex(bar) % p.palettes.length] : fxlib.PALETTES[0];
     const [pi] = this.patternForStep(g);
-    return { t, step: g, pattern: pi, lanes, master, palette, music, events: this.events.at(t) };
+    return { t, step: g, pattern: pi, lanes, master, palette, music, events: hits };
   }
 }

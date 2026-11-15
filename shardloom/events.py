@@ -10,13 +10,16 @@ Each one has three settings, kept in Project.shard_fx[name]:
 
 Whether an effect strikes on a step is a random draw that depends only on the project's seed,
 the effect and the step, so a render is the same every time and from any starting point.
-The shader for all of them is shaders.EVENTS; the index of each here is its index there.
+The shader for the whole-picture ones is shaders.EVENTS; the index of each here is its index there.
+
+The One layer effects (lens, mirror) strike the same way but land on one or more of the layers instead of
+the whole picture: layer_strikes() says which layers and how, and shaders.EFFECTS draws them on each layer.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -25,10 +28,13 @@ class Event:
     group: str
     about: str
     seconds: float      # how long one strike lasts
-    envelope: str       # "spike": hits then fades; "swell": rises and falls; "flat": holds then fades
+    envelope: str       # "spike": hits then fades; "swell": rises and falls; "flat": holds then fades;
+                        # "fade": fades in slowly, holds, fades out
     follows: str = ""   # a music curve (analysis) that sets how far it goes; "" for a fixed strike
     both_ways: bool = False   # follows the curve both ways from its middle (quiet: less, loud: more)
     peak: float = 0.4   # the chance of a strike on a step at full rate with no pulse preference
+    layer: bool = False  # lands on layers (layer_strikes) rather than the whole picture
+    options: dict = field(default_factory=dict)   # its own settings beyond rate, sync and strength, with defaults
 
 
 EVENTS = {
@@ -51,9 +57,20 @@ EVENTS = {
                         0.4, "flat", "level", True, peak=1.0),
     "saturation": Event("Saturation", "Colour", "Richer colour when the music is intense, greyer when it is calm",
                         0.4, "flat", "intensity", True, peak=1.0),
+    "lens": Event("Colour lens", "One layer", "A coloured lens fades in over one of the overlay layers: "
+                  "a new random colour each time", 3.0, "fade", layer=True),
+    "mirror": Event("Mirror", "One layer", "Folds layers into mirror images or a kaleidoscope that zooms "
+                    "from the middle or the edges, on the beat", 4.0, "flat", layer=True,
+                    options={"style": "kaleido", "segments": 6, "zoom": "middle", "depth": 0.5, "layers": 1,
+                             "beat": True}),
 }
 NAMES = list(EVENTS)
-GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour"]
+PICTURE = [n for n in NAMES if not EVENTS[n].layer]     # the whole-picture ones, in shaders.EVENTS order
+LAYER = [n for n in NAMES if EVENTS[n].layer]          # the One layer ones
+GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer"]
+
+MIRROR_STYLES = ["mirror", "quad", "kaleido"]           # shaders.EFFECTS fold_style 0, 1, 2
+MIRROR_ZOOMS = ["middle", "edges", "none"]
 
 
 def default_setting() -> dict:
@@ -61,7 +78,8 @@ def default_setting() -> dict:
 
 
 def setting(project, name: str) -> dict:
-    return {**default_setting(), **(getattr(project, "shard_fx", {}) or {}).get(name, {})}
+    ev = EVENTS.get(name)
+    return {**default_setting(), **(ev.options if ev else {}), **(getattr(project, "shard_fx", {}) or {}).get(name, {})}
 
 
 def envelope(kind: str, age: float) -> float:
@@ -72,7 +90,66 @@ def envelope(kind: str, age: float) -> float:
         return (1.0 - age) ** 2
     if kind == "swell":
         return math.sin(math.pi * age)
+    if kind == "fade":
+        return min(1.0, age / 0.4, (1.0 - age) / 0.25)
     return min(1.0, age / 0.04, (1.0 - age) / 0.15)
+
+
+def hsv(h: float, s: float, v: float) -> tuple[float, float, float]:
+    """As hsv() in the shaders (h 0..1)."""
+    def k(n):
+        x = abs((h * 6.0 + n) % 6.0 - 3.0) - 1.0
+        return min(1.0, max(0.0, x))
+    return tuple(v * (1.0 + (k(n) - 1.0) * s) for n in (0.0, 4.0, 2.0))
+
+
+def pick_layers(project, name: str, seed: float, count: int) -> list[int]:
+    """Which layers a strike of a One layer effect lands on: count of them, from its seed.
+
+    The lens goes on the overlay layers (above the first) when there are any; the mirror on any layer."""
+    from .sequencer import rand
+
+    lanes = [li for li, lane in enumerate(project.lanes) if not lane.mute]
+    if name == "lens" and len(lanes) > 1:
+        lanes = [li for li in lanes if li > 0] or lanes
+    key = int(math.floor(seed * 1e6))
+    i = NAMES.index(name)
+    lanes.sort(key=lambda li: (rand(project.seed, 3571, i, li, key), li))
+    return lanes[:max(1, count)]
+
+
+def layer_strikes(project, hits: dict, beats: float) -> dict[int, dict[str, float]]:
+    """layer index -> the shader settings of the One layer effects striking it (see shaders.EFFECTS).
+
+    hits: Scheduler.at(t); beats: the song position in beats, for the mirror's beat moves."""
+    out: dict[int, dict[str, float]] = {}
+    hit = hits.get("lens")
+    if hit:
+        amount, _, sd = hit
+        r, g, b = hsv(sd * 7.0 % 1.0, 0.85, 1.0)
+        for li in pick_layers(project, "lens", sd, 1):
+            out.setdefault(li, {}).update({"lens": amount, "lens_r": r, "lens_g": g, "lens_b": b})
+    hit = hits.get("mirror")
+    if hit:
+        amount, age, sd = hit
+        s = setting(project, "mirror")
+        style = MIRROR_STYLES.index(s["style"]) if s["style"] in MIRROR_STYLES else 2
+        segments = float(min(12, max(3, int(round(float(s["segments"]))))))
+        depth = min(1.0, max(0.0, float(s["depth"])))
+        frac = beats - math.floor(beats)
+        if s["beat"]:
+            zoom = depth * (1.0 - frac) ** 2                     # punches in on each beat and eases off
+            notch = (math.pi / 2.0, math.pi / 4.0, math.pi / segments)[style]
+            turn = math.floor(beats) * notch                     # a notch round on each beat
+        else:
+            zoom = depth * math.sin(math.pi * min(1.0, max(0.0, age)))
+            turn = age * 1.2
+        zoom *= {"middle": 1.0, "edges": -1.0}.get(s["zoom"], 0.0)
+        turn += sd * math.tau
+        for li in pick_layers(project, "mirror", sd, int(s["layers"])):
+            out.setdefault(li, {}).update({"fold": amount, "fold_style": float(style), "fold_segments": segments,
+                                           "fold_zoom": zoom, "fold_turn": turn % math.tau})
+    return out
 
 
 def chance(rate: float, sync: float, pulse: float, peak: float = 0.4) -> float:

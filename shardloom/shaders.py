@@ -22,6 +22,14 @@ uniform vec2 crop;          // the part of the source that covers the output's s
 uniform vec3 pal0, pal1, pal2;
 uniform float zoom, shake, mirror, kaleido, pixelate, glitch, rgb_split;
 uniform float hue, saturate, bw, posterize, invert, scanlines, colorize;
+// One layer shard effects (events.layer_strikes), 0 when off:
+uniform float lens;          // a single-colour lens over the layer, 0..1
+uniform vec3 lens_rgb;       // its colour
+uniform float fold;          // mirror / kaleidoscope, 0..1 (fades between the plain and the folded picture)
+uniform float fold_style;    // 0 mirror, 1 quad, 2 kaleidoscope
+uniform float fold_segments; // kaleidoscope segments
+uniform float fold_zoom;     // > 0 zooms in from the middle, < 0 brings mirrored copies in from the edges
+uniform float fold_turn;     // radians
 in vec2 uv;
 out vec4 color;
 
@@ -42,6 +50,25 @@ vec3 hue_rotate(vec3 c, float a) {
     float h = atan(yiq.z, yiq.y) + a;
     float chroma = length(yiq.yz);
     return toRGB * vec3(yiq.x, chroma * cos(h), chroma * sin(h));
+}
+
+// Where the mirror / kaleidoscope reads the picture for point p.
+vec2 folded(vec2 p, float aspect) {
+    vec2 q = (p - 0.5) * vec2(aspect, 1.0);
+    q = fold_zoom >= 0.0 ? q / (1.0 + 1.5 * fold_zoom) : q * (1.0 - 1.5 * fold_zoom);
+    float cs = cos(fold_turn), sn = sin(fold_turn);
+    q = mat2(cs, sn, -sn, cs) * q;
+    if (fold_style < 0.5) {
+        q.x = abs(q.x);
+    } else if (fold_style < 1.5) {
+        q = abs(q);
+    } else {
+        float wedge = 6.2831853 / max(fold_segments, 2.0);
+        float a = mod(atan(q.y, q.x), wedge);
+        a = abs(a - wedge * 0.5);
+        q = vec2(cos(a), sin(a)) * length(q);
+    }
+    return q / vec2(aspect, 1.0) + 0.5;
 }
 
 void main() {
@@ -85,6 +112,7 @@ void main() {
     } else {
         c = fetch(p);
     }
+    if (fold > 0.0) c = mix(c, fetch(folded(p, aspect)), fold);
 
     if (hue > 0.0) c = hue_rotate(c, hue * 6.2831853);
     float lum = dot(c, vec3(0.299, 0.587, 0.114));
@@ -107,6 +135,12 @@ void main() {
         float l = clamp(dot(c, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
         vec3 g = l < 0.5 ? mix(pal0, pal1, l * 2.0) : mix(pal1, pal2, l * 2.0 - 1.0);
         c = mix(c, g, colorize);
+    }
+    if (lens > 0.0) {
+        // The picture's light through a coloured glass: its brightness in the lens colour.
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        vec3 through = l * lens_rgb / max(dot(lens_rgb, vec3(0.299, 0.587, 0.114)), 0.3);
+        c = mix(c, through, lens);
     }
     color = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

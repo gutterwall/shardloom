@@ -1495,6 +1495,8 @@ class Editor:
             for name in (n for n in events.NAMES if events.EVENTS[n].group == group):
                 self.shard_fx_row(name)
             imgui.end_table()
+            if group == "One layer":
+                self.mirror_options(events.setting(p, "mirror"))
         imgui.spacing()
         imgui.text_disabled("Strikes fall the same way every time you play or render.")
 
@@ -1528,13 +1530,64 @@ class Editor:
         imgui.set_next_item_width(-1)
         ch3, s["strength"] = imgui.slider_float("##strength", float(s["strength"]), 0.0, 1.0, "%.2f")
         if ch1 or ch2 or ch3:
-            p.shard_fx[name] = {k: round(float(v), 3) for k, v in s.items()}
+            self.save_shard_fx(name, s)
         imgui.table_next_column()
         if imgui.small_button("try"):
             self.try_shard_fx(name)
         if imgui.is_item_hovered():
             imgui.set_tooltip("Set it off now in the preview (not saved)")
         imgui.pop_id()
+
+    def save_shard_fx(self, name: str, s: dict) -> None:
+        self.project.shard_fx[name] = {k: v if isinstance(v, (str, bool)) else round(float(v), 3) for k, v in s.items()}
+
+    def mirror_options(self, s: dict) -> None:
+        """The mirror's own settings, under the One layer effects."""
+        imgui.push_id("mirror_options")
+        imgui.spacing()
+        imgui.text_disabled("Mirror")
+        imgui.indent()
+        width = imgui.get_content_region_avail().x * 0.6
+        changed = False
+        styles = ["Mirror (left and right)", "Quad mirror (four ways)", "Kaleidoscope"]
+        i = events.MIRROR_STYLES.index(s["style"]) if s["style"] in events.MIRROR_STYLES else 2
+        imgui.set_next_item_width(width)
+        ch, i = imgui.combo("style", i, styles)
+        if ch:
+            s["style"], changed = events.MIRROR_STYLES[i], True
+        if s["style"] == "kaleido":
+            imgui.set_next_item_width(width)
+            ch, seg = imgui.slider_int("segments", int(s["segments"]), 3, 12)
+            if ch:
+                s["segments"], changed = seg, True
+        zooms = ["from the middle", "from the edges", "none"]
+        z = events.MIRROR_ZOOMS.index(s["zoom"]) if s["zoom"] in events.MIRROR_ZOOMS else 0
+        imgui.set_next_item_width(width)
+        ch, z = imgui.combo("zoom", z, zooms)
+        if ch:
+            s["zoom"], changed = events.MIRROR_ZOOMS[z], True
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("From the middle: pushes in on the centre. From the edges: mirrored copies come in from the sides.")
+        if s["zoom"] != "none":
+            imgui.set_next_item_width(width)
+            ch, s["depth"] = imgui.slider_float("zoom depth", float(s["depth"]), 0.0, 1.0, "%.2f")
+            changed |= ch
+        n = max(1, len(self.project.lanes))
+        imgui.set_next_item_width(width)
+        ch, layers = imgui.slider_int("layers", min(int(s["layers"]), n), 1, n)
+        if ch:
+            s["layers"], changed = layers, True
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("How many layers each strike folds.")
+        ch, s["beat"] = imgui.checkbox("on the beat", bool(s["beat"]))
+        changed |= ch
+        if imgui.is_item_hovered():
+            imgui.set_tooltip("On: the zoom punches in on every beat and the pattern turns a notch each beat.\n"
+                              "Off: it zooms and turns smoothly through the strike.")
+        imgui.unindent()
+        imgui.pop_id()
+        if changed:
+            self.save_shard_fx("mirror", s)
 
     def try_shard_fx(self, name: str) -> None:
         if not self.player:
