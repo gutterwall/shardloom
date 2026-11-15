@@ -10,7 +10,14 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: Colour flip and leaf colours
+## New in this version: shards take a fraction of the space
+
+- **Shards are stored as small videos.** The pool used to keep every frame of every shard raw, about 2.7 MB a frame at 720p, so a big pool could fill tens of gigabytes. Each shard is now a short H.264 video (`pool/0000.mp4`, …) with every frame a keyframe: 50 to 70 times smaller, and shards still play from any frame, at any speed and backwards. 40 shards of 720p phone footage take 53 MB instead of 2.9 GB.
+- **Cutting shards uses far less memory.** Shards are cut a frame at a time, with one video open at a time, so a project with dozens of 1080p videos cut at 60 fps no longer runs out of memory (one long 1080p shard went from 3.3 GB to 0.2 GB).
+
+Pools cut by an older version still play, but show **out of date**: press **Cut shards** to cut them again. You get the same shards, the same seed and the same edit, in a fraction of the space.
+
+## Colour flip and leaf colours (0.8)
 
 - **Colour flip** (Shard effects → Colour): a strobe that flashes in time with the beat (1, 2 or 4 **flashes** a beat), and each flash turns over one or more of the red, green and blue channels, a new mix each time.
 - **Leaf colours** on the **Mirror**: each leaf of the mirror, quad mirror or kaleidoscope turns over its own share of red, green and blue, so every leaf has a different colour, with new colours on each beat when **on the beat** is ticked. It is off unless you turn it up, so existing projects look the same.
