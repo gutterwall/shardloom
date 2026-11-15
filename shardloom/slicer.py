@@ -1,9 +1,10 @@
 """Cut raw videos into small random shards for the sequencer's pool.
 
-Each shard is stored as frames (uint8, frames x height x width x 3) in
-pool/NNNN.npy, described in pool/pool.json with its source, start, length and
-two scores the sequencer can choose by: motion (mean frame-to-frame change)
-and brightness.
+Each shard is stored as a small video, pool/NNNN.mp4 (H.264 with every frame
+a keyframe, so any frame decodes on its own), described in pool/pool.json with
+its source, start, length and two scores the sequencer can choose by: motion
+(mean frame-to-frame change) and brightness. Pools cut before this kept raw
+frames in pool/NNNN.npy; those still play.
 """
 
 from __future__ import annotations
@@ -11,14 +12,19 @@ from __future__ import annotations
 import json
 import os
 import random
+import threading
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 
-from .media import Decoders
+from .media import Decoders, ShardClip, ShardWriter
 
 POOL_FILE = "pool.json"
+SHARD_EXT = ".mp4"
+# How shards are stored; part of the pool's recipe, so a pool stored another way is cut again.
+SHARD_STORE = "h264-intra"
 
 
 @dataclass
@@ -74,34 +80,46 @@ def scores(frames: np.ndarray) -> tuple[float, float]:
     return motion, brightness
 
 
-def write_shard(path: str | os.PathLike, frames, count: int, height: int, width: int) -> tuple[int, float, float]:
-    """Writes count frames (an iterable of uint8 height x width x 3) to a .npy file as they come, scoring
-    them on the way, so a shard is never all in memory. Returns (frames, motion, brightness) as scores()."""
+def write_shard(path: str | os.PathLike, frames, count: int, height: int, width: int,
+                fps: float = 30.0) -> tuple[int, float, float]:
+    """Writes count frames (an iterable of uint8 height x width x 3) to a shard video as they come, scoring
+    them on the way, so a shard is never all in memory. Returns (frames, motion, brightness) as scores(),
+    scored from the frames given (before compression)."""
     path = Path(path)
     shape = (height, width, 3)
     bright = motion = 0.0
     prev = None
     n = 0
-    with open(path, "wb") as f:
-        np.lib.format.write_array_header_1_0(f, {"descr": np.dtype(np.uint8).str, "fortran_order": False,
-                                                 "shape": (count,) + shape})
-        for frame in frames:
-            if n >= count:
-                break
-            frame = np.ascontiguousarray(frame, dtype=np.uint8)
-            if frame.shape != shape:
-                raise ValueError(f"shard frame {frame.shape}, expected {shape}")
-            f.write(frame.data)
-            small = frame[::8, ::8].astype(np.float32) / 255.0
-            bright += float(small.mean())
-            if prev is not None:
-                motion += float(np.abs(small - prev).mean())
-            prev = small
-            n += 1
-    if n != count:
+    try:
+        with ShardWriter(path, width, height, fps) as writer:
+            for frame in frames:
+                if n >= count:
+                    break
+                frame = np.ascontiguousarray(frame, dtype=np.uint8)
+                if frame.shape != shape:
+                    raise ValueError(f"shard frame {frame.shape}, expected {shape}")
+                writer.write(frame)
+                small = frame[::8, ::8].astype(np.float32) / 255.0
+                bright += float(small.mean())
+                if prev is not None:
+                    motion += float(np.abs(small - prev).mean())
+                prev = small
+                n += 1
+        if n != count:
+            raise ValueError(f"{path.name}: got {n} frames, expected {count}")
+    except BaseException:
         path.unlink(missing_ok=True)
-        raise ValueError(f"{path.name}: got {n} frames, expected {count}")
+        raise
     return n, (motion / (n - 1) if n > 1 else 0.0), bright / n
+
+
+def load_shard(path: str | os.PathLike) -> np.ndarray:
+    """All of a shard's frames, uint8 (frames, height, width, 3), from a shard video or an old .npy."""
+    path = Path(path)
+    if path.suffix == ".npy":
+        return np.load(path)
+    clip = ShardClip(path)
+    return np.stack([clip.frame(i) for i in range(len(clip))])
 
 
 def slice_videos(sources: list[str | os.PathLike], pool_dir: str | os.PathLike, count: int = 48,
@@ -120,9 +138,9 @@ def slice_videos(sources: list[str | os.PathLike], pool_dir: str | os.PathLike, 
         next_id = max((s.id for s in existing), default=-1) + 1
         for n, (src, start, length) in enumerate(cuts):
             d = decoders[src]
-            name = f"{next_id:04d}.npy"
+            name = f"{next_id:04d}{SHARD_EXT}"
             n_frames, motion, brightness = write_shard(pool_dir / name, d.iter_segment(start, length),
-                                                       d.segment_length(length), height, width)
+                                                       d.segment_length(length), height, width, fps)
             shards.append(Shard(next_id, name, str(Path(sources[src]).resolve()), start, length, n_frames,
                                 motion, brightness))
             next_id += 1
@@ -160,19 +178,69 @@ def pool_format(pool_dir: str | os.PathLike) -> dict:
 
 
 class PoolFrames:
-    """Shard frames, memory-mapped from disk so a large pool loads instantly."""
+    """Shard frames, decoded as they are asked for, so a large pool loads instantly and stays small.
 
-    def __init__(self, pool_dir: str | os.PathLike):
+    Shards are read from disk when first used and kept compressed (up to clip_bytes); decoded frames are
+    kept up to frame_bytes, so a shard that loops or plays again is not decoded again. Frames are read-only.
+    Old pools of .npy files are memory-mapped as before."""
+
+    def __init__(self, pool_dir: str | os.PathLike, frame_bytes: int = 512 << 20, clip_bytes: int = 768 << 20):
         self.dir = Path(pool_dir)
         self.shards = load_pool(self.dir)
         fmt = pool_format(self.dir)
         self.width, self.height, self.fps = fmt["width"], fmt["height"], fmt["fps"]
-        self._frames = {s.id: np.load(self.dir / s.file, mmap_mode="r") for s in self.shards}
         self.by_id = {s.id: s for s in self.shards}
+        self.frame_bytes, self.clip_bytes = frame_bytes, clip_bytes
+        self._npy = {s.id: np.load(self.dir / s.file, mmap_mode="r") for s in self.shards
+                     if s.file.endswith(".npy")}
+        self._clips: OrderedDict[int, ShardClip] = OrderedDict()
+        self._clips_size = 0
+        self._decoded: OrderedDict[tuple[int, int], np.ndarray] = OrderedDict()
+        self._decoded_size = 0
+        self._lock = threading.Lock()
+
+    def _clip(self, shard_id: int) -> ShardClip:
+        clip = self._clips.get(shard_id)
+        if clip is not None:
+            self._clips.move_to_end(shard_id)
+            return clip
+        clip = ShardClip(self.dir / self.by_id[shard_id].file)
+        self._clips[shard_id] = clip
+        self._clips_size += clip.nbytes
+        while self._clips_size > self.clip_bytes and len(self._clips) > 1:
+            _, old = self._clips.popitem(last=False)
+            self._clips_size -= old.nbytes
+        return clip
 
     def frame(self, shard_id: int, index: int) -> np.ndarray:
-        frames = self._frames[shard_id]
-        return frames[index % len(frames)]
+        if shard_id in self._npy:
+            frames = self._npy[shard_id]
+            return frames[index % len(frames)]
+        with self._lock:
+            index %= max(1, self.length(shard_id))
+            key = (shard_id, index)
+            img = self._decoded.get(key)
+            if img is not None:
+                self._decoded.move_to_end(key)
+                return img
+            img = self._clip(shard_id).frame(index)
+            img.flags.writeable = False
+            self._decoded[key] = img
+            self._decoded_size += img.nbytes
+            while self._decoded_size > self.frame_bytes and len(self._decoded) > 1:
+                _, old = self._decoded.popitem(last=False)
+                self._decoded_size -= old.nbytes
+            return img
 
     def length(self, shard_id: int) -> int:
-        return len(self._frames[shard_id])
+        if shard_id in self._npy:
+            return len(self._npy[shard_id])
+        return self.by_id[shard_id].frames
+
+    def close(self) -> None:
+        """Lets go of the pool's files and frames (so they can be replaced, on Windows too)."""
+        with self._lock:
+            self._npy.clear()
+            self._clips.clear()
+            self._decoded.clear()
+            self._clips_size = self._decoded_size = 0

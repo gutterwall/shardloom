@@ -67,7 +67,7 @@ A project is a folder that keeps a copy of every file it uses, so it can be move
 My video/
   project.json   the edit: media list, cut settings, sequencer, titles, output
   media/         copies of the song, videos, photos and title pictures
-  pool/          the cut shards (rebuilt from media/ when missing)
+  pool/          the cut shards, as small H.264 videos (rebuilt from media/ when missing)
   analysis.*     the song's beats and loudness (rebuilt when missing)
   renders/       your rendered videos
 ```
@@ -110,7 +110,7 @@ shardloom info myvideo
 
 ## How it works
 
-**Shards.** Each video is cut at random places into pieces between the shortest and longest length, without overlap, scaled and cropped to the output's shape. If you change the shape afterwards, shards are cropped to fit until you cut them again. Each shard gets an *energy* score (how much moves in it), ranked across the pool from 0 (calmest) to 1 (busiest).
+**Shards.** Each video is cut at random places into pieces between the shortest and longest length, without overlap, scaled and cropped to the output's shape. If you change the shape afterwards, shards are cropped to fit until you cut them again. Each shard gets an *energy* score (how much moves in it), ranked across the pool from 0 (calmest) to 1 (busiest). Shards are stored as H.264 with every frame a keyframe, 50 to 70 times smaller than raw frames, and still play from any frame and backwards. A pool cut by an older version (raw `.npy` frames) still plays but shows *out of date*: press **Cut shards** to cut it again, the same shards in a fraction of the space.
 
 **The sequencer.** Lanes are layers, blended over each other (normal, add, screen, multiply, difference). Each step has:
 - an on/off switch and a *chance* of firing

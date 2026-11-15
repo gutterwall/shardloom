@@ -302,6 +302,95 @@ def _video_codec() -> str:
     raise MediaError("no H.264 or MPEG-4 encoder in this FFmpeg")
 
 
+# Shards are stored as H.264 with every frame a keyframe: 50-70x smaller than raw frames, and any frame
+# decodes on its own, so shards still play from any frame, at any speed, backwards. Four slices a frame let
+# four threads decode it (about 2 ms for 720p). Fixed encoder threads keep the files the same on every machine.
+SHARD_X264 = {"crf": "20", "g": "1", "bf": "0", "preset": "veryfast", "threads": "4", "slices": "4"}
+
+
+class ShardWriter:
+    """Writes a shard's RGB frames, one at a time, to a small video file (H.264, every frame a keyframe)."""
+
+    def __init__(self, path: str | os.PathLike, width: int, height: int, fps: float):
+        self.container = av.open(str(path), "w", format="mp4")
+        num, den = _fraction(fps)
+        try:
+            av.Codec("libx264", "w")
+            codec, options = "libx264", SHARD_X264
+        except Exception:
+            # An FFmpeg without x264: MPEG-4 Part 2, still every frame a keyframe.
+            codec, options = "mpeg4", {"g": "1", "qscale": "3"}
+        self.video = self.container.add_stream(codec, rate=Fraction(num, den))
+        self.video.width, self.video.height = width, height
+        self.video.pix_fmt = "yuv420p"
+        self.video.options = dict(options)
+        if codec == "mpeg4":
+            self.video.codec_context.qscale = 3
+        self.frames = 0
+
+    def write(self, rgb: np.ndarray) -> None:
+        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
+        frame.pts = self.frames
+        self.frames += 1
+        for packet in self.video.encode(frame):
+            self.container.mux(packet)
+
+    def close(self) -> None:
+        if self.container is None:
+            return
+        try:
+            for packet in self.video.encode(None):
+                self.container.mux(packet)
+        finally:
+            self.container.close()
+            self.container = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class ShardClip:
+    """A shard written by ShardWriter, held compressed in memory; frame(i) decodes any one frame.
+
+    The file is read once and closed, so it can be replaced while the clip is in use."""
+
+    def __init__(self, path: str | os.PathLike):
+        with _open(path) as c:
+            if not c.streams.video:
+                raise MediaError(f"{path}: no video stream")
+            stream = c.streams.video[0]
+            try:
+                self.packets = [bytes(p) for p in c.demux(stream) if p.size]
+            except av.error.FFmpegError as e:
+                raise MediaError(f"{path}: {e}") from e
+            self._ctx = av.CodecContext.create(stream.codec_context.name, "r")
+            self._ctx.extradata = stream.codec_context.extradata
+        self._ctx.thread_type = "SLICE"
+        self._ctx.thread_count = 4
+        self.path = str(path)
+        self.nbytes = sum(map(len, self.packets))
+
+    def __len__(self) -> int:
+        return len(self.packets)
+
+    def frame(self, index: int) -> np.ndarray:
+        """Frame index as uint8 (height, width, 3)."""
+        try:
+            out = self._ctx.decode(av.Packet(self.packets[index]))
+            if not out:
+                # A decoder that holds frames back gives this one up when drained.
+                out = self._ctx.decode(None)
+                self._ctx.flush_buffers()
+        except av.error.FFmpegError as e:
+            raise MediaError(f"{self.path}: frame {index}: {e}") from e
+        if not out:
+            raise MediaError(f"{self.path}: frame {index} did not decode")
+        return out[-1].to_ndarray(format="rgb24")
+
+
 class Mp4Writer:
     """An MP4 with H.264 video from RGB frames and AAC audio from float samples."""
 

@@ -24,7 +24,7 @@ import numpy as np
 
 from .media import Decoders, VideoDecoder, probe
 from .sequencer import PROJECT_FILE, Project, Source, project_path
-from .slicer import POOL_FILE, Shard, plan_cuts, rank_energy, save_pool, write_shard
+from .slicer import POOL_FILE, SHARD_EXT, SHARD_STORE, Shard, plan_cuts, rank_energy, save_pool, write_shard
 
 MEDIA = "media"
 POOL = "pool"
@@ -238,7 +238,7 @@ def photo_shard(img, width: int, height: int, frames: int, motion: str, rng: ran
 def recipe(project: Project, width: int, height: int) -> str:
     """A fingerprint of everything the pool is cut from: when it changes, the shards are out of date."""
     data = {
-        "size": [width, height], "fps": project.fps,
+        "size": [width, height], "fps": project.fps, "store": SHARD_STORE,
         "cut": {k: project.cut.get(k) for k in ("count", "min", "max", "seed")},
         "sources": [[s.path, s.kind, s.id, s.weight, s.start, s.end, s.motion, s.shards]
                     for s in project.sources if s.enabled],
@@ -293,8 +293,8 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
             # Straight to disk a frame at a time: a long, large shard is never all in memory.
             nonlocal done
             sid = len(shards)
-            name = f"{sid:04d}.npy"
-            n_frames, motion, brightness = write_shard(tmp_dir / name, frames, count, height, width)
+            name = f"{sid:04d}{SHARD_EXT}"
+            n_frames, motion, brightness = write_shard(tmp_dir / name, frames, count, height, width, fps)
             shards.append(Shard(sid, name, str(project_path(directory, src.path)), start, length, n_frames,
                                 motion, brightness, source_id=src.id))
             done += 1
