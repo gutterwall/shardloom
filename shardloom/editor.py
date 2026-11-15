@@ -96,17 +96,24 @@ class Task:
         self.error: str | None = None
         self.result = None
         self.thread: threading.Thread | None = None
+        # Set by cancel(); work that can stop early watches it and raises library.Cancelled.
+        self.cancelled = threading.Event()
 
     def start(self) -> None:
         def run():
             try:
                 self.result = self.work(self)
+            except library.Cancelled:
+                pass
             except Exception as e:
                 traceback.print_exc()
                 self.error = str(e) or type(e).__name__
 
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
+
+    def cancel(self) -> None:
+        self.cancelled.set()
 
     def report(self, done: int, total: int) -> None:
         self.progress = done / max(1, total)
@@ -172,10 +179,23 @@ class Editor:
     def busy_with(self, label: str) -> bool:
         return any(t.label == label for t in self.tasks)
 
+    def cancel_task(self, label: str) -> None:
+        """Stops the task: a queued one is dropped; a running one stops at its next check."""
+        for task in list(self.tasks):
+            if task.label != label:
+                continue
+            if task.thread is None:
+                self.tasks.remove(task)
+                self.say(f"{label}: cancelled.")
+            else:
+                task.cancel()
+
     def poll_tasks(self) -> None:
         while self.tasks and self.tasks[0].finished:
             task = self.tasks.pop(0)
-            if task.error:
+            if task.cancelled.is_set():
+                self.say(f"{task.label}: cancelled.")
+            elif task.error:
                 self.say(f"{task.label} failed: {task.error}", 10.0)
             elif task.done:
                 try:
@@ -233,10 +253,11 @@ class Editor:
             self.queue_thumbnail(s)
         if p.music:
             self.load_song()
-        if p.sources and not (folder / p.pool / "pool.json").exists():
-            self.cut()
+        # Shards are cut only when Cut shards is pressed: a big pool can take a long time.
 
     def close_project(self) -> None:
+        # A cut belongs to the project it was started in.
+        self.cancel_task("Cutting shards")
         if self.project and self.dir and self.dirty:
             self.save()
         self.drop_session()
@@ -460,7 +481,8 @@ class Editor:
 
         def work(task):
             task.status = "Cutting shards"
-            return library.build_pool(snapshot, directory, *size, progress=task.report, swap=False)
+            return library.build_pool(snapshot, directory, *size, progress=task.report, swap=False,
+                                      cancel=task.cancelled)
 
         def done(shards):
             self.drop_session()
@@ -1032,20 +1054,31 @@ class Editor:
         if ch:
             cut["detail"] = details[k]
         pw, ph = self.pool_size()
-        gb = library.disk_estimate(p, pw, ph) / 1e9
-        imgui.text_disabled(f"shards {pw}x{ph}, about {gb:.1f} GB on disk" if gb >= 0.1 else f"shards {pw}x{ph}")
+        mb = library.disk_estimate(p, pw, ph) / 1e6
+        on_disk = f"about {mb / 1000:.1f} GB" if mb >= 1000 else f"about {max(1, round(mb))} MB"
+        imgui.text_disabled(f"shards {pw}x{ph}, {on_disk} on disk")
         stale = self.stale()["pool"]
         cutting = self.busy_with("Cutting shards")
-        imgui.begin_disabled(cutting or not p.sources)
-        if stale:
-            imgui.push_style_color(imgui.Col_.button, V4(0.8, 0.45, 0.15))
-        if imgui.button("Cut shards", V2(140, 30)):
-            self.cut()
-        if stale:
-            imgui.pop_style_color()
-        imgui.end_disabled()
-        imgui.same_line()
+        stopping = cutting and any(t.label == "Cutting shards" and t.cancelled.is_set() for t in self.tasks)
         if cutting:
+            # The same button stops the cut; the old shards are kept.
+            imgui.begin_disabled(stopping)
+            if imgui.button("Cancel##cut", V2(140, 30)):
+                self.cancel_task("Cutting shards")
+            imgui.end_disabled()
+        else:
+            imgui.begin_disabled(not p.sources)
+            if stale:
+                imgui.push_style_color(imgui.Col_.button, V4(0.8, 0.45, 0.15))
+            if imgui.button("Cut shards", V2(140, 30)):
+                self.cut()
+            if stale:
+                imgui.pop_style_color()
+            imgui.end_disabled()
+        imgui.same_line()
+        if stopping:
+            imgui.text("stopping...")
+        elif cutting:
             imgui.text("cutting...")
         elif stale:
             imgui.text_colored(V4(1, 0.7, 0.3), "out of date")

@@ -253,13 +253,20 @@ def pool_recipe(directory: str | os.PathLike, pool: str = POOL) -> str | None:
     return json.loads(path.read_text()).get("recipe")
 
 
+class Cancelled(Exception):
+    """Cutting the pool was cancelled."""
+
+
 def build_pool(project: Project, directory: str | os.PathLike, width: int, height: int, progress=None,
-               swap: bool = True) -> list[Shard]:
+               swap: bool = True, cancel=None) -> list[Shard]:
     """Cuts the pool from the project's enabled sources: random video cuts plus shards made from the photos.
 
     The same project and settings always cut the same pool, so a project can be rebuilt from its media.
     The new pool is cut beside the old one; with swap=False it is left there for finish_pool(), so a
     program still showing the old pool can let go of it first.
+
+    cancel: a threading.Event; once set, cutting stops within a frame, raising Cancelled, and the
+    half-cut pool is removed (the old pool is left as it was).
     """
     directory = Path(directory)
     pool_dir = directory / project.pool
@@ -292,6 +299,8 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
         def add(count: int, frames, src: Source, start: float, length: float) -> None:
             # Straight to disk a frame at a time: a long, large shard is never all in memory.
             nonlocal done
+            if cancel is not None:
+                frames = _until(cancel, frames)
             sid = len(shards)
             name = f"{sid:04d}{SHARD_EXT}"
             n_frames, motion, brightness = write_shard(tmp_dir / name, frames, count, height, width, fps)
@@ -326,6 +335,15 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
     return shards
 
 
+def _until(cancel, frames):
+    for frame in frames:
+        if cancel.is_set():
+            raise Cancelled()
+        yield frame
+    if cancel.is_set():
+        raise Cancelled()
+
+
 def finish_pool(project: Project, directory: str | os.PathLike) -> None:
     """Puts a pool cut by build_pool(swap=False) in place of the old one."""
     pool_dir = Path(directory) / project.pool
@@ -351,7 +369,8 @@ def finish_pool(project: Project, directory: str | os.PathLike) -> None:
 
 def disk_estimate(project: Project, width: int, height: int) -> int:
     """Roughly how many bytes the pool will take."""
-    frame = width * height * 3
+    # A shard frame is stored compressed, about 1/60 of its raw size (see media.SHARD_X264).
+    frame = width * height * 3 / 60
     avg = (float(project.cut.get("min", 0.25)) + float(project.cut.get("max", 1.5))) / 2
     count = int(project.cut.get("count", 48)) if any(s.enabled and s.kind == "video" for s in project.sources) else 0
     frames = count * avg * project.fps
