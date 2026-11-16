@@ -13,6 +13,7 @@ import copy
 import gc
 import json
 import os
+import queue
 import random
 import re
 import subprocess
@@ -145,7 +146,13 @@ class Editor:
         self.message = ""
         self.message_until = 0.0
         self.thumbs: dict[str, moderngl.Texture] = {}
-        self._thumb_data: list[tuple[str, np.ndarray]] = []
+        self._thumb_data: list[tuple[int, str, np.ndarray]] = []     # (generation, path, picture)
+        # Thumbnails are made by a few threads from a queue: one thread per file, all at once, took 8 GB
+        # for a project of 52 videos and 91 photos. The generation goes up when a project closes, so
+        # thumbnails still queued for it are skipped.
+        self._thumb_queue: queue.Queue = queue.Queue()
+        self._thumb_threads: list[threading.Thread] = []
+        self._thumb_generation = 0
         self.media_info: dict[str, dict] = {}
         self.sel_title = 0
         self.show_titles_tab = False
@@ -261,6 +268,8 @@ class Editor:
         if self.project and self.dir and self.dirty:
             self.save()
         self.drop_session()
+        self._thumb_generation += 1
+        self._thumb_data.clear()
         for tex in self.thumbs.values():
             tex.release()
         self.thumbs.clear()
@@ -351,14 +360,24 @@ class Editor:
 
     # ---- media -----------------------------------------------------------
 
-    def queue_thumbnail(self, src) -> None:
-        directory = self.dir
+    THUMB_THREADS = 4
 
-        def work(task):
-            try:
-                img = library.thumbnail(directory, src)
-            except Exception:
-                return
+    def queue_thumbnail(self, src) -> None:
+        self._thumb_queue.put((self._thumb_generation, self.dir, src))
+        if len(self._thumb_threads) < self.THUMB_THREADS:
+            t = threading.Thread(target=self._thumb_worker, daemon=True)
+            self._thumb_threads.append(t)
+            t.start()
+
+    def _thumb_worker(self) -> None:
+        while True:
+            generation, directory, src = self._thumb_queue.get()
+            if generation == self._thumb_generation:
+                self._make_thumbnail(generation, directory, src)
+
+    def _make_thumbnail(self, generation: int, directory: Path, src) -> None:
+        try:
+            img = library.thumbnail(directory, src)
             full = project_path(directory, src.path)
             if src.kind == "video":
                 from .media import probe
@@ -370,15 +389,18 @@ class Editor:
 
                 with Image.open(full) as im:
                     info = {"duration": 0.0, "width": im.size[0], "height": im.size[1]}
-            self.media_info[src.path] = info
-            self._thumb_data.append((src.path, img))
-
-        # Thumbnails run in their own threads, beside the queued tasks.
-        threading.Thread(target=work, args=(None,), daemon=True).start()
+        except Exception:
+            return
+        if generation != self._thumb_generation:
+            return
+        self.media_info[src.path] = info
+        self._thumb_data.append((generation, src.path, img))
 
     def upload_thumbs(self) -> None:
         while self._thumb_data:
-            path, img = self._thumb_data.pop(0)
+            generation, path, img = self._thumb_data.pop(0)
+            if generation != self._thumb_generation:
+                continue
             img = np.ascontiguousarray(img)
             tex = self.ctx.texture((img.shape[1], img.shape[0]), 3, img.tobytes())
             tex.filter = (moderngl.LINEAR, moderngl.LINEAR)

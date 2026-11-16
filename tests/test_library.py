@@ -212,3 +212,17 @@ def test_a_cut_can_be_cancelled_and_keeps_the_old_pool(tmp_path, videos, photo, 
     assert seen == [1]                                       # stopped inside the next shard
     assert not (d / "pool.new").exists()                     # the half-cut pool is removed
     assert (d / "pool" / "pool.json").read_text() == before  # the old pool is untouched
+
+
+def test_a_photo_thumbnail_is_decoded_small(tmp_path):
+    from PIL import Image
+
+    from shardloom.sequencer import Source
+
+    path = tmp_path / "big.jpg"
+    Image.new("RGB", (4000, 3000), (200, 40, 40)).save(path)
+    assert library.load_photo(path).size == (4000, 3000)
+    small = library.load_photo(path, draft=(320, 320))
+    assert 320 <= min(small.size) and max(small.size) <= 1000   # decoded at 1/8 (500 x 375), not whole
+    thumb = library.thumbnail(tmp_path, Source(str(path), "photo"))
+    assert thumb.shape == (120, 160, 3) and thumb[60, 80, 0] > 150

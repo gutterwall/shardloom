@@ -167,7 +167,8 @@ def thumbnail(directory: str | os.PathLike, src: Source, width: int = 160) -> np
     """A small picture of a source: (h, w, 3) uint8 at the source's own shape."""
     full = project_path(directory, src.path)
     if src.kind == "photo":
-        img = load_photo(full)
+        # Decoded straight at about twice the thumbnail's size: a 12 MP photo never comes out whole.
+        img = load_photo(full, draft=(2 * width, 2 * width))
         img.thumbnail((width, width))
         return np.asarray(img)
     meta = probe(full)
@@ -179,10 +180,14 @@ def thumbnail(directory: str | os.PathLike, src: Source, width: int = 160) -> np
 
 # ---- photos -------------------------------------------------------------
 
-def load_photo(path: str | os.PathLike):
+def load_photo(path: str | os.PathLike, draft: tuple[int, int] | None = None):
+    """The photo as an RGB image, turned upright. draft: decode a JPEG at a smaller size, at least this big
+    (the JPEG decoder scales by 1/2, 1/4 or 1/8 as it goes, so a large photo is never decoded whole)."""
     from PIL import Image, ImageOps
 
     with Image.open(path) as img:
+        if draft:
+            img.draft("RGB", draft)
         img = ImageOps.exif_transpose(img)
         if img.mode in ("RGBA", "LA", "P"):
             img = img.convert("RGBA")
