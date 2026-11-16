@@ -10,7 +10,11 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: Cut shards when you ask, and cancel it
+## New in this version: big projects open without filling memory
+
+- **Opening a big project uses far less memory.** The Media list made a thumbnail for every video and photo all at once, and decoded each photo at full size to do it. A project of 52 videos and 91 12-megapixel photos took about 7 GB just to open, enough to crash a 14 GB machine. Thumbnails are now made four at a time, and photos are decoded at a fraction of their size for them: the same project opens in 1.1 GB.
+
+## Cut shards when you ask, and cancel it (0.9.1)
 
 - **Opening a project no longer cuts shards by itself.** A project without shards (a new one, a packed one, or one whose `pool` folder was removed) opens straight away and waits for you to press **Cut shards**. A big project used to go straight into a long cut every time it opened.
 - **Cut shards can be cancelled.** While it cuts, the button becomes **Cancel**: it stops at once, removes the half-cut shards and keeps the ones you had. Closing the project also stops its cut.
