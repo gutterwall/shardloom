@@ -166,7 +166,7 @@ BLEND = """
 #version 330
 uniform sampler2D base;
 uniform sampler2D layer;
-uniform int mode;          // index into fx.BLEND_MODES
+uniform int mode;          // index into fx.BLEND_MODES; 5 and up for the visuals (visuals.BLENDS)
 uniform float opacity;
 in vec2 uv;
 out vec4 color;
@@ -178,6 +178,12 @@ void main() {
     else if (mode == 2) m = 1.0 - (1.0 - a) * (1.0 - b);
     else if (mode == 3) m = a * b;
     else if (mode == 4) m = abs(a - b);
+    // 5 and up: how the visuals (visuals.BLENDS) mix in.
+    else if (mode == 5) m = a - b;                                                  // minus
+    else if (mode == 6) m = mix(2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b), step(0.5, a));   // overlay
+    else if (mode == 7) m = mix(a, b, smoothstep(0.04, 0.3, max(b.r, max(b.g, b.b))));          // occlude
+    else if (mode == 8) m = mix(b, a, smoothstep(0.03, 0.25, dot(a, vec3(0.299, 0.587, 0.114))));  // behind
+    else if (mode == 9) m = a * clamp(b * 2.0 + 0.15, 0.0, 1.0);                    // multiply, lit where it's drawn
     else m = b;
     color = vec4(clamp(mix(a, m, opacity), 0.0, 1.0), 1.0);
 }
@@ -548,6 +554,159 @@ void main() {
         vec3 on = vec3(float(m & 1), float((m >> 1) & 1), float((m >> 2) & 1));
         c = mix(c, mix(c, 1.0 - clamp(c, 0.0, 1.0), on), a);
     }
+    color = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+"""
+
+# The MilkDrop-style visuals (visuals.py). One step of a visual's feedback loop: the last picture warped and
+# dimmed, with a new wave and shapes drawn over it. pre[] holds the preset's numbers (visuals.PARAMS order).
+VISUAL_WARP = """
+#version 330
+uniform sampler2D prev;     // the visual's last step
+uniform bool first;         // the first step: nothing before it
+uniform vec2 res;           // the feedback picture's size
+uniform float tau;          // seconds since the strike
+uniform float vseed;        // the strike's seed
+uniform vec4 music;         // bass, mid, high, onset (0..1)
+uniform float beat;         // 1 on the beat, falling away
+uniform float pre[24];
+in vec2 uv;
+out vec4 color;
+
+const int DECAY = 0, ZOOM = 1, ZOOM_BASS = 2, ROT = 3, ROT_MID = 4, WARP = 5, WARP_SPEED = 6, DX = 7, DY = 8,
+          WANDER = 9, WAVE = 10, WAVE_SIZE = 11, WAVE_WIDTH = 12, HUE = 13, HUE_SPEED = 14, SAT = 15, SIDES = 16,
+          SHAPE_SIZE = 17, SHAPE_SPIN = 18, SHAPES = 19;
+
+vec3 hsv(float h, float s, float v) {
+    vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    return v * mix(vec3(1.0), k, s);
+}
+
+vec2 wrap(vec2 p) { return 1.0 - abs(1.0 - mod(p, 2.0)); }   // mirrored repeat, like MilkDrop's wrapped edges
+
+float segment(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// Distance from q to the outline of a regular polygon with n sides and radius r, turned by a.
+float polygon(vec2 q, float n, float r, float a) {
+    float at = atan(q.y, q.x) + a;
+    float wedge = 6.2831853 / n;
+    float k = mod(at, wedge) - wedge * 0.5;
+    float edge = r * cos(wedge * 0.5) / cos(k);
+    return abs(length(q) - edge);
+}
+
+void main() {
+    float aspect = res.x / res.y;
+    vec2 asp = vec2(aspect, 1.0);
+    float bass = music.x, mid = music.y, high = music.z, onset = music.w;
+
+    // ---- the last picture, moved ----
+    vec2 c = 0.5 + pre[WANDER] * 0.08 * vec2(sin(tau * 0.37 + vseed * 6.2831853), cos(tau * 0.29 + vseed * 3.1));
+    vec2 q = (uv - c) * asp;
+    float rad = length(q);
+    float zoom = max(0.5, pre[ZOOM] + pre[ZOOM_BASS] * (bass - 0.5));
+    q /= pow(zoom, 1.0 + 0.6 * rad);                     // further at the edges, as MilkDrop's zoom exponent
+    float rot = pre[ROT] + pre[ROT_MID] * (mid - 0.5);
+    float cs = cos(rot), sn = sin(rot);
+    q = mat2(cs, sn, -sn, cs) * q;
+    float w = pre[WARP] * 0.012 * (0.6 + 0.8 * high);
+    q += w * vec2(sin(tau * pre[WARP_SPEED] + q.y * 7.0 + vseed * 20.0),
+                  cos(tau * pre[WARP_SPEED] * 1.13 + q.x * 6.0 + vseed * 9.0));
+    q -= vec2(pre[DX], pre[DY]) * 0.01;
+    vec3 old = first ? vec3(0.0) : texture(prev, wrap(q / asp + c)).rgb * pre[DECAY];
+
+    // ---- the wave ----
+    vec2 p = (uv - 0.5) * asp;
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    float size = pre[WAVE_SIZE];
+    float width = pre[WAVE_WIDTH] * 0.006 * (1.0 + 1.5 * onset);
+    int mode = int(pre[WAVE] + 0.5);
+    float d = 10.0;
+    if (mode == 0) {                                     // circle
+        float R = size * (0.2 + 0.12 * bass + 0.04 * (sin(a * 5.0 + tau * 2.0) * mid + sin(a * 11.0 - tau * 3.1) * high
+                                                    + sin(a * 3.0 + tau * 1.3) * onset));
+        d = abs(r - R);
+    } else if (mode == 1) {                              // line across
+        float y = size * 0.16 * (sin(p.x * 9.0 + tau * 2.7) * (0.3 + mid) + 0.6 * sin(p.x * 23.0 - tau * 4.3) * high
+                                 + 0.5 * sin(p.x * 4.0 + tau) * bass);
+        d = abs(p.y - y);
+    } else if (mode == 2) {                              // spiral arms
+        float v = sin(log(r + 1e-3) * 7.0 - a * 3.0 + tau * 2.0 + bass * 3.0);
+        d = abs(v) * r * 0.12 / size + (1.0 - smoothstep(0.03, 0.12, r)) * 0.05 + smoothstep(0.45, 0.8, r / size) * 0.05;
+    } else if (mode == 3) {                              // scope: a Lissajous figure
+        vec2 last = vec2(0.0);
+        for (int k = 0; k <= 64; k++) {
+            float s = float(k) / 64.0 * 6.2831853;
+            vec2 pt = vec2(sin(s * 3.0 + tau * 0.9 + mid * 2.0), sin(s * 4.0 + tau * 1.1)) * size * 0.3
+                      * (0.7 + 0.5 * bass) * vec2(1.2, 1.0);
+            if (k > 0) d = min(d, segment(p, last, pt));
+            last = pt;
+        }
+    } else if (mode == 4) {                              // rays from the middle
+        float n = 12.0;
+        float wedge = 6.2831853 / n;
+        float k = mod(a + tau * 0.3, wedge) - wedge * 0.5;
+        float reach = size * (0.12 + 0.35 * max(bass, onset));
+        d = abs(k) * r + max(0.0, r - reach) + max(0.0, 0.03 - r);
+    } else {                                             // two waves, one above and one below
+        float y = size * 0.08 * (sin(p.x * 7.0 + tau * 1.9) * (0.4 + bass) + 0.5 * sin(p.x * 19.0 - tau * 3.3) * high);
+        d = min(abs(p.y - 0.18 - y), abs(p.y + 0.18 + y));
+    }
+    float hue = pre[HUE] + tau * pre[HUE_SPEED] + r * 0.25;
+    vec3 ink = hsv(fract(hue), pre[SAT], 1.0) * (0.55 + 0.6 * max(mid, beat));
+    vec3 c2 = old + ink * exp(-(d * d) / (width * width));
+
+    // ---- shapes ----
+    if (pre[SIDES] >= 3.0) {
+        int n = int(pre[SHAPES] + 0.5);
+        for (int i = 0; i < 8; i++) {
+            if (i >= n) break;
+            float fi = float(i);
+            float at = fi / float(n) * 6.2831853 + tau * pre[SHAPE_SPIN];
+            vec2 at2 = n > 1 ? vec2(cos(at), sin(at)) * 0.28 : vec2(0.0);
+            float sr = pre[SHAPE_SIZE] * (0.06 + 0.07 * bass + 0.04 * beat);
+            float e = polygon(p - at2, pre[SIDES], sr, -tau * pre[SHAPE_SPIN] * 2.0 + fi);
+            c2 += hsv(fract(hue + 0.5 + fi * 0.09), pre[SAT], 1.0) * 0.8 * exp(-(e * e) / (0.004 * 0.004));
+        }
+    }
+    color = vec4(clamp(c2, 0.0, 1.0), 1.0);
+}
+"""
+
+# A visual's feedback picture made ready to mix in, at the output's size: folded, echoed, brightened, solarized.
+VISUAL_COMP = """
+#version 330
+uniform sampler2D feed;
+uniform vec2 res;           // the output's size
+uniform float tau;
+uniform float pre[24];
+in vec2 uv;
+out vec4 color;
+
+const int ECHO = 20, KALEIDO = 21, GAMMA = 22, SOLARIZE = 23;
+
+void main() {
+    vec2 p = uv;
+    float aspect = res.x / res.y;
+    if (pre[KALEIDO] >= 2.0) {
+        vec2 q = (p - 0.5) * vec2(aspect, 1.0);
+        float wedge = 6.2831853 / pre[KALEIDO];
+        float a = mod(atan(q.y, q.x) + tau * 0.1, wedge);
+        a = abs(a - wedge * 0.5);
+        p = vec2(cos(a), sin(a)) * length(q) / vec2(aspect, 1.0) + 0.5;
+    }
+    vec3 c = texture(feed, clamp(p, 0.0, 1.0)).rgb;
+    if (pre[ECHO] > 0.0) {
+        vec2 e = (vec2(1.0 - p.x, p.y) - 0.5) / (1.0 + 0.35 * pre[ECHO]) + 0.5;
+        c = max(c, texture(feed, e).rgb * 0.7 * pre[ECHO]);
+    }
+    if (pre[GAMMA] > 0.0) c = pow(c, vec3(1.0 / (1.0 + 1.5 * pre[GAMMA])));
+    if (pre[SOLARIZE] > 0.0) c = mix(c, abs(c - 0.5) * 2.0, pre[SOLARIZE] * smoothstep(0.3, 0.7, max(c.r, max(c.g, c.b))));
     color = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 """

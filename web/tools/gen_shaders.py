@@ -1,4 +1,5 @@
-"""Writes web/js/shaders.js from shardloom/shaders.py, so the phone app draws with the desktop's shaders.
+"""Writes web/js/shaders.js from shardloom/shaders.py, so the phone app draws with the desktop's shaders, and the
+MilkDrop-style visuals' presets from shardloom/visuals.py.
 
 Run it after changing shaders.py:  python web/tools/gen_shaders.py
 """
@@ -10,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from shardloom import shaders  # noqa: E402
+from shardloom import shaders, visuals  # noqa: E402
 
 HEADER = "#version 300 es\nprecision highp float;\nprecision highp int;"
 
@@ -24,9 +25,16 @@ def es(source: str) -> str:
 
 def generate() -> str:
     lines = ["// Made by web/tools/gen_shaders.py from shardloom/shaders.py; do not edit by hand.", ""]
-    for name in ("VERTEX", "EFFECTS", "BLEND", "MASTER", "OVERLAY", "EVENTS"):
+    for name in ("VERTEX", "EFFECTS", "BLEND", "MASTER", "OVERLAY", "EVENTS", "VISUAL_WARP", "VISUAL_COMP"):
         lines.append(f"export const {name} = {json.dumps(es(getattr(shaders, name)))};")
         lines.append("")
+    lines.append("// The visuals' numbers (shardloom/visuals.py).")
+    for name, value in (("VISUAL_RATE", visuals.RATE), ("VISUAL_FEED_HEIGHT", visuals.FEED_HEIGHT),
+                        ("VISUAL_PARAMS", visuals.PARAMS), ("VISUAL_WAVES", visuals.WAVES),
+                        ("VISUAL_PRESETS", visuals.PRESETS),
+                        ("VISUAL_BLENDS", {k: list(v) for k, v in visuals.BLENDS.items()})):
+        lines.append(f"export const {name} = {json.dumps(value)};")
+    lines.append("")
     return "\n".join(lines)
 
 

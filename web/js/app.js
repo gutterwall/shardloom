@@ -6,6 +6,7 @@ import * as audio from "./audio.js";
 import * as formats from "./formats.js";
 import * as fxlib from "./fx.js";
 import * as eventlib from "./events.js";
+import * as visuallib from "./visuals.js";
 import * as pacelib from "./pace.js";
 import * as poollib from "./pool.js";
 import * as packlib from "./pack.js";
@@ -960,6 +961,25 @@ function MirrorOptions({ s, save }) {
       Off: it zooms and turns smoothly through the strike.</p>`;
 }
 
+// The visuals' own settings: which presets and ways of mixing in a strike may pick. At least one of each stays on.
+function VisualOptions({ s, save }) {
+  const group = (key, every, title) => {
+    const on = visuallib.enabled(s, key, every);
+    return html`<div class="faint">${title}</div><div class="row" style="flex-wrap:wrap">
+      ${Object.keys(every).map(name => html`<${Check} key=${name} label=${every[name]} value=${on.includes(name)}
+        on=${v => {
+          const next = Object.keys(every).filter(n => (n === name ? v : on.includes(n)));
+          s[key] = next.length ? next : [name];
+          save();
+        }} />`)}</div>`;
+  };
+  return html`
+    ${group("blends", Object.fromEntries(Object.entries(visuallib.BLENDS).map(([k, [label]]) => [k, label])), "Mixed in as")}
+    ${group("presets", Object.fromEntries(Object.entries(visuallib.PRESETS).map(([k, p]) => [k, p.label])), "Visuals")}
+    <p class="faint">Each strike picks one visual, one way of mixing it in and the layer it goes over. Background
+      puts it behind the whole picture, where it shows through the dark parts.</p>`;
+}
+
 // Colour flip's own setting, under its sliders.
 function FlipOptions({ s, save }) {
   return html`
@@ -1000,6 +1020,7 @@ function EffectsPanel() {
           <${Slider} label="strength" value=${s.strength} on=${v => set("strength", v)} />
           ${name === "flip" && html`<${FlipOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
           ${name === "mirror" && html`<${MirrorOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
+          ${name === "visuals" && html`<${VisualOptions} s=${s} save=${() => { p.shard_fx[name] = s; changed(); }} />`}
         </div>`;
       })}`)}
     <p class="faint">Strikes fall the same way every time you play or render.</p>`;

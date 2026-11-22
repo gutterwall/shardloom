@@ -17,12 +17,18 @@ turns over one or more of the red, green and blue channels, a new mix each time 
 
 The One layer effects (lens, mirror) strike the same way but land on one or more of the layers instead of
 the whole picture: layer_strikes() says which layers and how, and shaders.EFFECTS draws them on each layer.
+
+The Visuals effect (MilkDrop-style visuals) strikes the same way too, and is drawn into the layer stack:
+see visuals.py.
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 from dataclasses import dataclass, field
+
+from .visuals import DEFAULT_OPTIONS as DEFAULT_VISUALS
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,7 @@ class Event:
     both_ways: bool = False   # follows the curve both ways from its middle (quiet: less, loud: more)
     peak: float = 0.4   # the chance of a strike on a step at full rate with no pulse preference
     layer: bool = False  # lands on layers (layer_strikes) rather than the whole picture
+    stack: bool = False  # drawn into the layer stack (visuals.strike) rather than over the whole picture
     options: dict = field(default_factory=dict)   # its own settings beyond rate, sync and strength, with defaults
 
 
@@ -69,11 +76,16 @@ EVENTS = {
     # Last, so the effects before it keep their strikes (the index is part of each draw).
     "flip": Event("Colour flip", "Colour", "A strobe that turns over one or more of the red, green and blue "
                   "channels, a new mix on every flash", 1.5, "flat", options={"flashes": 2}),
+    # After flip for the same reason.
+    "visuals": Event("MilkDrop", "Visuals", "A MilkDrop-style music visual, drawn live and mixed into the layers: "
+                     "plus, minus, occlude, overlay, multiply or behind them as a background", 8.0, "fade",
+                     peak=0.25, stack=True, options=DEFAULT_VISUALS),
 }
 NAMES = list(EVENTS)
-PICTURE = [n for n in NAMES if not EVENTS[n].layer]     # the whole-picture ones, in shaders.EVENTS order
+# The whole-picture ones, in shaders.EVENTS order.
+PICTURE = [n for n in NAMES if not EVENTS[n].layer and not EVENTS[n].stack]
 LAYER = [n for n in NAMES if EVENTS[n].layer]          # the One layer ones
-GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer"]
+GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer", "Visuals"]
 
 MIRROR_STYLES = ["mirror", "quad", "kaleido"]           # shaders.EFFECTS fold_style 0, 1, 2
 MIRROR_ZOOMS = ["middle", "edges", "none"]
@@ -86,7 +98,9 @@ def default_setting() -> dict:
 
 def setting(project, name: str) -> dict:
     ev = EVENTS.get(name)
-    return {**default_setting(), **(ev.options if ev else {}), **(getattr(project, "shard_fx", {}) or {}).get(name, {})}
+    out = {**default_setting(), **(ev.options if ev else {}), **(getattr(project, "shard_fx", {}) or {}).get(name, {})}
+    # Lists (the visuals' presets and blends) are copied, so changing them never changes the defaults or the project.
+    return {k: list(v) if isinstance(v, list) else v for k, v in out.items()}
 
 
 def envelope(kind: str, age: float) -> float:
@@ -193,9 +207,36 @@ class Scheduler:
         self.engine = engine
         self._steps: dict[int, tuple[float, float]] = {}
         self.manual: dict[str, float] = {}      # name -> time it was set off by hand (not saved)
+        # Effects drawn into the stack take turns (turns()): name -> (settings, last step looked at, the steps
+        # their strikes started on).
+        self._turns: dict[str, tuple[tuple, int, list[int]]] = {}
+        self.started: dict[str, float] = {}     # name -> when the strike at the last at() began (exactly)
 
     def reset(self) -> None:
         self._steps.clear()
+        self._turns.clear()
+
+    def turns(self, i: int, name: str, s: dict, now: int) -> list[int]:
+        """The steps up to now on which an effect that takes turns (the visuals) starts a strike: as any
+        effect, but a new one only once the last has finished. Worked out from the first step on and kept,
+        so it is the same from any starting point."""
+        from .sequencer import rand
+
+        p = self.engine.project
+        ev = EVENTS[name]
+        key = (p.seed, float(s["rate"]), float(s["sync"]))
+        got = self._turns.get(name)
+        if got is None or got[0] != key:
+            got = (key, -1, [])
+        _, done, starts = got
+        for g in range(done + 1, now + 1):
+            t0, pulse = self.step(g)
+            if starts and t0 < self.step(starts[-1])[0] + ev.seconds:
+                continue
+            if rand(p.seed, 7919, i, g) < chance(float(s["rate"]), float(s["sync"]), pulse, ev.peak):
+                starts.append(g)
+        self._turns[name] = (key, max(done, now), starts)
+        return starts
 
     def step(self, g: int) -> tuple[float, float]:
         """(start time, pulse) of step g; the pulse is the beat itself and how hard the music hits there."""
@@ -233,7 +274,14 @@ class Scheduler:
                 continue
             hit = None
             held = 0.0          # Colour effects: the strongest of the strikes still going, so they join up
-            if s["rate"] > 0.0:
+            if s["rate"] > 0.0 and ev.stack:
+                starts = self.turns(i, name, s, now)
+                k = bisect.bisect_right(starts, now) - 1
+                if k >= 0:
+                    t0 = self.step(starts[k])[0]
+                    if t0 <= t < t0 + ev.seconds:
+                        hit = (t0, rand(p.seed, 104729, i, starts[k]))
+            elif s["rate"] > 0.0:
                 g = now
                 while g >= 0:
                     t0, pulse = self.step(g)
@@ -251,6 +299,7 @@ class Scheduler:
                 hit = (by_hand, (by_hand * 7.31) % 1.0)
             if hit is None:
                 continue
+            self.started[name] = hit[0]
             age = (t - hit[0]) / ev.seconds
             amount = strength * max(held, envelope(ev.envelope, age))
             if ev.follows:

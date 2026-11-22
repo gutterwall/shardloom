@@ -10,6 +10,7 @@ import moderngl
 from . import events as eventlib
 from . import fx as fxlib
 from . import shaders
+from . import visuals as visuallib
 from .sequencer import FrameState
 
 # The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layer_strikes).
@@ -28,6 +29,15 @@ def headless_context() -> moderngl.Context:
     return moderngl.create_standalone_context(require=330)
 
 
+def _array(prog: moderngl.Program, name: str, values: list[float]) -> None:
+    """Sets a float array uniform. Drivers may drop the end of an array the shader never reads (the visuals'
+    warp reads only the first 20 of its 24 preset numbers), so write only what is there."""
+    u = prog.get(name, None)
+    if u is not None:
+        vals = [float(x) for x in values][:u.array_length]
+        u.value = vals if len(vals) > 1 else vals[0]
+
+
 class Renderer:
     def __init__(self, ctx: moderngl.Context, width: int, height: int, frames):
         """frames: an object with frame(shard_id, index) -> uint8 (h, w, 3), such as slicer.PoolFrames."""
@@ -39,9 +49,12 @@ class Renderer:
         self.blend = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.BLEND)
         self.master = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.MASTER)
         self.events = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.EVENTS)
+        self.visual_warp = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.VISUAL_WARP)
+        self.visual_comp = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.VISUAL_COMP)
         self.vao = {name: ctx.vertex_array(prog, [(quad, "2f", "pos")])
                     for name, prog in (("effects", self.effects), ("blend", self.blend), ("master", self.master),
-                                       ("events", self.events))}
+                                       ("events", self.events), ("visual_warp", self.visual_warp),
+                                       ("visual_comp", self.visual_comp))}
         self._quad = quad
 
         def target():
@@ -59,6 +72,13 @@ class Renderer:
         self._uploaded: list[tuple[int, int] | None] = []
         self.black = ctx.texture((1, 1), 3, bytes(3))
         self.frame_count = 0
+        # The MilkDrop-style visual: its feedback pictures (made when first needed), which strike they hold and
+        # how many steps of it they have taken.
+        self.feed: list | None = None
+        self._feed = 0
+        self._visual_key = None
+        self._visual_steps = 0
+        self.visual = target()         # the visual, made ready to mix in
 
     # ---- helpers -------------------------------------------------------
 
@@ -121,6 +141,66 @@ class Renderer:
                 u.value = vals if len(vals) > 1 else vals[0]
         self.vao["events"].render(moderngl.TRIANGLE_STRIP)
 
+    def _visual(self, v: dict) -> None:
+        """Steps the visual's feedback loop up to this frame (from the strike's start when it is new or the
+        frame is earlier than the last), then draws it at the output's size into self.visual."""
+        ctx = self.ctx
+        if self.feed is None:
+            fw, fh = visuallib.feed_size(self.width, self.height)
+            self.feed = []
+            for _ in range(2):
+                tex = ctx.texture((fw, fh), 3)
+                tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+                tex.repeat_x = tex.repeat_y = False
+                self.feed.append((tex, ctx.framebuffer([tex])))
+        pre = visuallib.pack(v["preset"])
+        key = (v["seed"], v["preset"])
+        if key != self._visual_key or v["steps"] + 1 < self._visual_steps:
+            self._visual_key, self._visual_steps = key, 0
+        w = self.visual_warp
+        fw, fh = self.feed[0][0].size
+        _array(w, "pre", pre)
+        w["res"].value = (float(fw), float(fh))
+        w["vseed"].value = float(v["seed"])
+        u = w.get("prev", None)
+        if u is not None:
+            u.value = 0
+        music = v["music"]
+        while self._visual_steps <= v["steps"]:
+            k = self._visual_steps
+            src = self.feed[self._feed][0]
+            self._feed ^= 1
+            self.feed[self._feed][1].use()
+            src.use(0)
+            heard = music[min(k, len(music) - 1)]
+            w["first"].value = k == 0
+            w["tau"].value = k / visuallib.RATE
+            w["music"].value = tuple(float(x) for x in heard[:4])
+            w["beat"].value = float(heard[4])
+            self.vao["visual_warp"].render(moderngl.TRIANGLE_STRIP)
+            self._visual_steps += 1
+        c = self.visual_comp
+        self.visual[1].use()
+        self.feed[self._feed][0].use(0)
+        c["feed"].value = 0
+        c["res"].value = (float(self.width), float(self.height))
+        u = c.get("tau", None)
+        if u is not None:
+            u.value = v["steps"] / visuallib.RATE
+        _array(c, "pre", pre)
+        self.vao["visual_comp"].render(moderngl.TRIANGLE_STRIP)
+
+    def _blend(self, base: moderngl.Texture, layer: moderngl.Texture, fbo: moderngl.Framebuffer, mode: int,
+               opacity: float) -> None:
+        fbo.use()
+        base.use(0)
+        layer.use(1)
+        self.blend["base"].value = 0
+        self.blend["layer"].value = 1
+        self.blend["mode"].value = mode
+        self.blend["opacity"].value = float(opacity)
+        self.vao["blend"].render(moderngl.TRIANGLE_STRIP)
+
     # ---- drawing -------------------------------------------------------
 
     def render(self, state: FrameState) -> moderngl.Texture:
@@ -129,7 +209,15 @@ class Renderer:
         a, b = self.accum
         a[1].use()
         ctx.clear(0.0, 0.0, 0.0)
+        v = state.visual
+        if v is not None:
+            self._visual(v)
+            v_mode = visuallib.BLENDS[v["blend"]][2]
         for li, lane in enumerate(state.lanes):
+            if v is not None and li > 0 and v["after"] == li - 1 and v["blend"] != "behind":
+                # The visual goes over the layers below this one.
+                self._blend(a[0], self.visual[0], b[1], v_mode, v["amount"])
+                a, b = b, a
             if lane.voice is None or lane.opacity <= 0.0:
                 continue
             tex = self._input(li)
@@ -141,15 +229,12 @@ class Renderer:
             self._effects(tex, self.layer[1], lane.fx, state, True, seed=li * 17.0 + lane.voice.step,
                           strike=lane.strike)
             # Blend the lane over what is there so far.
-            b[1].use()
-            a[0].use(0)
-            self.layer[0].use(1)
-            self.blend["base"].value = 0
-            self.blend["layer"].value = 1
             mode = fxlib.BLEND_MODES.index(lane.blend) if lane.blend in fxlib.BLEND_MODES else 0
-            self.blend["mode"].value = mode
-            self.blend["opacity"].value = float(lane.opacity)
-            self.vao["blend"].render(moderngl.TRIANGLE_STRIP)
+            self._blend(a[0], self.layer[0], b[1], mode, lane.opacity)
+            a, b = b, a
+        if v is not None and (v["blend"] == "behind" or v["after"] >= len(state.lanes) - 1 or v["after"] < 0):
+            # Over the top layer, or behind the whole picture.
+            self._blend(a[0], self.visual[0], b[1], v_mode, v["amount"])
             a, b = b, a
         self._effects(a[0], self.mastered[1], state.master, state, False, seed=state.step)
         prev = self.out[self._out]

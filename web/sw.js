@@ -6,7 +6,7 @@ const FILES = [
   "icons/icon.svg", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",
   "js/app.js", "js/analysis.js", "js/analysis-worker.js", "js/audio.js", "js/engine.js", "js/events.js",
   "js/exporter.js", "js/formats.js", "js/fx.js", "js/pace.js", "js/pack.js", "js/pool.js", "js/program.js",
-  "js/project.js", "js/rand.js", "js/renderer.js", "js/shaders.js", "js/store.js", "js/titles.js",
+  "js/project.js", "js/rand.js", "js/renderer.js", "js/shaders.js", "js/store.js", "js/titles.js", "js/visuals.js",
   "vendor/standalone.module.js", "vendor/mp4-muxer.mjs", "vendor/fflate.mjs",
 ];
 
