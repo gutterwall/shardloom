@@ -10,7 +10,17 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: big projects open without filling memory
+## New in this version: MilkDrop-style visuals
+
+A **Visuals** group on the Shard effects page, on the desktop and on phones, with a **MilkDrop** effect: music visualisations drawn live and mixed into your layers.
+
+- **Ten visuals:** Nebula, Tunnel, Scope, Starburst, Ripple, Polygons, Kaleido bloom, Vortex, Aurora and Solar. Like the MilkDrop visualiser, each is a feedback loop: every frame the last picture is zoomed, turned, rippled and dimmed, and a new wave and shapes, moved by the bass, mids, highs and beats, are drawn over it. They are Shardloom's own presets, not MilkDrop's.
+- **Six ways into the picture**, one picked at random each strike from the ones you tick: **Plus** adds its light, **Minus** takes light away, **Occlude** covers the layers where it is drawn, **Overlay** lightens and darkens them, **Multiply** shows them only where it is lit, and **Background** puts it behind everything, showing through the dark parts.
+- Except for Background, each strike goes over a random playing layer, so the layers above still cover it.
+- Visuals take turns: each lasts 8 seconds and fades in and out, with the usual **how often**, **pulse** and **strength** sliders and the **try** button. It is off unless you turn it up, so existing projects look the same.
+- The preview, the render and the phone app draw the same visual at the same moment, at any frame rate and from any starting point.
+
+## Big projects open without filling memory (0.9.2)
 
 - **Opening a big project uses far less memory.** The Media list made a thumbnail for every video and photo all at once, and decoded each photo at full size to do it. A project of 52 videos and 91 12-megapixel photos took about 7 GB just to open, enough to crash a 14 GB machine. Thumbnails are now made four at a time, and photos are decoded at a fraction of their size for them: the same project opens in 1.1 GB.
 
