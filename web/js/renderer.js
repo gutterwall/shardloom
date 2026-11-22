@@ -4,6 +4,7 @@
 import * as fxlib from "./fx.js";
 import * as eventlib from "./events.js";
 import * as shaders from "./shaders.js";
+import * as visuallib from "./visuals.js";
 import { renderTitle } from "./titles.js";
 
 // The One layer shard effects' uniforms in shaders.EFFECTS, besides lens_rgb (events.layerStrikes).
@@ -48,7 +49,8 @@ class Prog {
     const gl = this.gl;
     if (v.length === 1) gl.uniform1f(l, v[0]);
     else if (v.length === 2) gl.uniform2f(l, v[0], v[1]);
-    else gl.uniform3f(l, v[0], v[1], v[2]);
+    else if (v.length === 3) gl.uniform3f(l, v[0], v[1], v[2]);
+    else gl.uniform4f(l, v[0], v[1], v[2], v[3]);
   }
 
   i(name, v) {
@@ -78,6 +80,8 @@ export class Renderer {
     this.master = new Prog(gl, shaders.MASTER);
     this.events = new Prog(gl, shaders.EVENTS);
     this.overlay = new Prog(gl, shaders.OVERLAY);
+    this.visualWarp = new Prog(gl, shaders.VISUAL_WARP);
+    this.visualComp = new Prog(gl, shaders.VISUAL_COMP);
     this.present = new Prog(gl, `#version 300 es
 precision highp float;
 uniform sampler2D tex;
@@ -106,6 +110,13 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     this.black = this.texture(1, 1, new Uint8Array([0, 0, 0, 0]));
     this.titles = new Map();
     this.titleImages = {};       // title.image path -> ImageBitmap, set by the app
+    // The MilkDrop-style visual: its feedback pictures (made when first needed), which strike they hold and how many
+    // steps of it they have taken, as renderer.py.
+    this.feed = null;
+    this._feed = 0;
+    this.visualKey = null;
+    this.visualSteps = 0;
+    this.visual = this.target();
   }
 
   texture(w, h, data = null) {
@@ -176,6 +187,70 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     this.draw(target);
   }
 
+  // Steps the visual's feedback loop up to this frame (from the strike's start when it is new or the frame is earlier
+  // than the last), then draws it at the output's size into this.visual.
+  runVisual(v) {
+    const gl = this.gl;
+    if (!this.feed) {
+      const [fw, fh] = visuallib.feedSize(this.width, this.height);
+      this.feed = [0, 1].map(() => {
+        const tex = this.texture(fw, fh);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        return { tex, fbo };
+      });
+    }
+    const pre = visuallib.pack(v.preset);
+    const key = `${v.seed}:${v.preset}`;
+    if (key !== this.visualKey || v.steps + 1 < this.visualSteps) {
+      this.visualKey = key;
+      this.visualSteps = 0;
+    }
+    const w = this.visualWarp.use();
+    const { w: fw, h: fh } = this.feed[0].tex;
+    w.fv("pre", pre);
+    w.f("res", fw, fh);
+    w.f("vseed", v.seed);
+    w.i("prev", 0);
+    while (this.visualSteps <= v.steps) {
+      const k = this.visualSteps;
+      const src = this.feed[this._feed].tex;
+      this._feed ^= 1;
+      const dst = this.feed[this._feed];
+      this.bind(0, src);
+      const heard = v.music[Math.min(k, v.music.length - 1)];
+      w.i("first", k === 0 ? 1 : 0);
+      w.f("tau", k / visuallib.RATE);
+      w.f("music", heard[0], heard[1], heard[2], heard[3]);
+      w.f("beat", heard[4]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
+      gl.viewport(0, 0, fw, fh);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      this.visualSteps += 1;
+    }
+    const c = this.visualComp.use();
+    this.bind(0, this.feed[this._feed].tex);
+    c.i("feed", 0);
+    c.f("res", this.width, this.height);
+    c.f("tau", v.steps / visuallib.RATE);
+    c.fv("pre", pre);
+    this.draw(this.visual);
+  }
+
+  blendPass(base, layer, target, mode, opacity) {
+    const p = this.blend.use();
+    this.bind(0, base);
+    this.bind(1, layer);
+    p.i("base", 0);
+    p.i("layer", 1);
+    p.i("mode", mode);
+    p.f("opacity", opacity);
+    this.draw(target);
+  }
+
   // The sequencer's picture for a frame state; returns its texture.
   render(state) {
     let [a, b] = this.accum;
@@ -184,7 +259,18 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
     gl.viewport(0, 0, this.width, this.height);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    const v = state.visual || null;
+    let vMode = 0;
+    if (v) {
+      this.runVisual(v);
+      vMode = visuallib.BLENDS[v.blend][2];
+    }
     state.lanes.forEach((lane, li) => {
+      if (v && li > 0 && v.after === li - 1 && v.blend !== "behind") {
+        // The visual goes over the layers below this one.
+        this.blendPass(a.tex, this.visual.tex, b, vMode, v.amount);
+        [a, b] = [b, a];
+      }
       if (!lane.voice || lane.opacity <= 0) return;
       while (this.inputs.length <= li) {
         this.inputs.push(this.texture(1, 1, new Uint8Array(4)));
@@ -202,16 +288,14 @@ void main() { color = vec4(texture(tex, uv).rgb, 1.0); }`);
       }
       this.runEffects(tex, this.layer, lane.fx, state, true, li * 17 + lane.voice.step, lane.strike || {});
       // Blend the lane over what is there so far.
-      const p = this.blend.use();
-      this.bind(0, a.tex);
-      this.bind(1, this.layer.tex);
-      p.i("base", 0);
-      p.i("layer", 1);
-      p.i("mode", Math.max(0, fxlib.BLEND_MODES.indexOf(lane.blend)));
-      p.f("opacity", lane.opacity);
-      this.draw(b);
+      this.blendPass(a.tex, this.layer.tex, b, Math.max(0, fxlib.BLEND_MODES.indexOf(lane.blend)), lane.opacity);
       [a, b] = [b, a];
     });
+    if (v && (v.blend === "behind" || v.after >= state.lanes.length - 1 || v.after < 0)) {
+      // Over the top layer, or behind the whole picture.
+      this.blendPass(a.tex, this.visual.tex, b, vMode, v.amount);
+      [a, b] = [b, a];
+    }
     this.runEffects(a.tex, this.mastered, state.master, state, false, state.step);
     const prev = this.out[this._out];
     let picture = this.mastered.tex;

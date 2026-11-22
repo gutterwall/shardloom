@@ -16,7 +16,8 @@ from pathlib import Path
 
 from . import fx as fxlib
 from . import pace as pacelib
-from .events import LAYER, Scheduler, layer_strikes
+from . import visuals as visuallib
+from .events import EVENTS, LAYER, Scheduler, layer_strikes
 
 CHOICES = ["random", "bag", "no_repeat", "intensity"]
 PROJECT_FILE = "project.json"
@@ -295,6 +296,9 @@ class FrameState:
     music: dict[str, float]
     # Shard effects striking now: name -> (amount, age 0..1, seed), see events.Scheduler.
     events: dict[str, tuple[float, float, float]] = field(default_factory=dict)
+    # The MilkDrop-style visual striking now (visuals.strike), with "music": what each of its steps so far heard
+    # (visuals.music_at), or None.
+    visual: dict | None = None
 
 
 class Engine:
@@ -313,6 +317,7 @@ class Engine:
         self.punch: dict[str, float] = {}
         self.recording = False
         self.events = Scheduler(self)
+        self._visual_music: tuple[float, float, list] | None = None   # (seed, start, what its steps heard)
         self.retime()
 
     # ---- clock ---------------------------------------------------------
@@ -326,6 +331,7 @@ class Engine:
         # (palette index, intensity level) of each bar from the start.
         self._palettes: list[tuple[int, int]] = []
         self.events.reset()
+        self._visual_music = None
         self.reset()
 
     def reset(self) -> None:
@@ -612,4 +618,19 @@ class Engine:
         bar = int(math.floor(max(0.0, self.beats(t)) / 4))
         palette = p.palettes[self.palette_index(bar) % len(p.palettes)] if p.palettes else fxlib.PALETTES[0]
         pi, _ = self.pattern_for_step(g)
-        return FrameState(t, g, pi, lanes, master, palette, music, hits)
+        return FrameState(t, g, pi, lanes, master, palette, music, hits, self.visual(hits, t))
+
+    def visual(self, hits: dict, t: float) -> dict | None:
+        """The visual striking at t (visuals.strike) and what each of its steps heard, or None."""
+        hit = hits.get("visuals")
+        if not hit:
+            return None
+        t0 = self.events.started["visuals"]
+        v = visuallib.strike(self.project, hit, t0, EVENTS["visuals"].seconds)
+        if self._visual_music is None or self._visual_music[:2] != (v["seed"], t0):
+            self._visual_music = (v["seed"], t0, [])
+        heard = self._visual_music[2]
+        while len(heard) <= v["steps"]:
+            heard.append(visuallib.music_at(self.analysis, t0 + len(heard) / visuallib.RATE))
+        v["music"] = heard[:v["steps"] + 1]
+        return v

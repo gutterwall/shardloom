@@ -134,8 +134,17 @@ def states(engine, times):
                     "lanes": [[l.voice.shard if l.voice else None, l.frame, sorted(l.fx.items()), sorted(l.strike.items())]
                               for l in st.lanes],
                     "master": sorted(st.master.items()), "palette": st.palette,
-                    "events": sorted((k, [round(x, 9) for x in v]) for k, v in st.events.items())})
+                    "events": sorted((k, [round(x, 9) for x in v]) for k, v in st.events.items()),
+                    "visual": visual_of(st.visual)})
     return out
+
+
+def visual_of(v):
+    """A frame's visual without its music (compared on its own), its numbers as plain floats."""
+    if v is None:
+        return None
+    return {k: (float(x) if isinstance(x, float) else x) for k, x in v.items() if k != "music"} | {
+        "heard": len(v["music"]), "last": [float(x) for x in v["music"][-1]]}
 
 
 JS_STATES = """
@@ -148,7 +157,10 @@ return arg.times.map(t => {
   return {step: st.step, pattern: st.pattern,
           lanes: st.lanes.map(l => [l.voice ? l.voice.shard : null, l.frame, sorted(l.fx), sorted(l.strike)]),
           master: sorted(st.master), palette: st.palette,
-          events: sorted(st.events).map(([k, v]) => [k, v.map(x => Math.round(x * 1e9) / 1e9)])};
+          events: sorted(st.events).map(([k, v]) => [k, v.map(x => Math.round(x * 1e9) / 1e9)]),
+          visual: st.visual ? {...Object.fromEntries(Object.entries(st.visual).filter(([k]) => k !== "music")),
+                               heard: st.visual.music.length, last: st.visual.music[st.visual.music.length - 1]}
+                            : null};
 });
 """
 
@@ -168,6 +180,9 @@ def compare_engine(page, analysed, project: Project, times):
                       for a, b, c, d in w["lanes"]]
         w["master"] = [(k, pytest.approx(v)) for k, v in w["master"]]
         w["events"] = [(k, pytest.approx(v, abs=1e-6)) for k, v in w["events"]]
+        if w["visual"]:
+            w["visual"] = {k: pytest.approx(v, abs=1e-6) if isinstance(v, (float, list)) else v
+                           for k, v in w["visual"].items()}
         assert g == w, f"at {t}"
 
 
@@ -201,6 +216,73 @@ def test_lens_and_mirror_match(page, analysed):
     p.shard_fx["mirror"].update({"style": "kaleido", "segments": 7, "zoom": "middle", "beat": False, "layers": 9})
     compare_engine(page, analysed, p, times)
     assert any(l.strike for t in times for l in Engine(p, shards(), analysed[0]).state(t).lanes)
+
+
+def test_visuals_match(page, analysed):
+    p = starter_project("", "pool", 4, seed=9)
+    p.lanes[1].mute = True
+    p.shard_fx = {"visuals": {"rate": 1.0, "sync": 1.0, "strength": 0.9, "presets": ["tunnel", "scope", "solar"],
+                              "blends": ["subtract", "occlude", "behind", "multiply"]},
+                  "fireworks": {"rate": 0.5}}
+    times = [i * 0.05 for i in range(560)]
+    compare_engine(page, analysed, p, times)
+    seen = {(st.visual["preset"], st.visual["blend"]) for t in times
+            if (st := Engine(p, shards(), analysed[0]).state(t)).visual}
+    assert len(seen) >= 2
+    # From any start, as the desktop.
+    compare_engine(page, analysed, p, [13.3, 4.1, 22.0, 9.95])
+
+
+def test_visuals_draw_the_same_picture(page):
+    """The phone draws a visual as the desktop does (to within the GPUs' rounding)."""
+    from shardloom import fx as fxlib
+    from shardloom.renderer import Renderer, headless_context
+    from shardloom.sequencer import FrameState, LaneState, Voice
+
+    try:
+        ctx = headless_context()
+    except Exception as e:
+        pytest.skip(f"no headless OpenGL: {e}")
+    import math
+
+    music = [[0.5 + 0.5 * math.sin(k / 7), 0.5 + 0.4 * math.sin(k / 11), 0.5 + 0.5 * math.sin(k / 5),
+              1.0 if k % 15 == 0 else 0.1, math.exp(-(k % 15) / 3)] for k in range(61)]
+    for preset, blend in (("nebula", "add"), ("scope", "occlude"), ("bloom", "behind"), ("solar", "multiply")):
+        v = {"preset": preset, "blend": blend, "after": 0, "amount": 0.9, "seed": 0.42, "t0": 0.0, "steps": 60,
+             "music": music}
+
+        class Grey:
+            width, height = 160, 90
+
+            def frame(self, shard, index):
+                img = np.zeros((90, 160, 3), np.uint8)
+                img[:, :80] = (90, 90, 90)
+                return img
+
+        r = Renderer(ctx, 160, 90, Grey())
+        st = FrameState(2.0, 0, 0, [LaneState(Voice(0, 0, 0, 0.0, 99.0, 1.0, False, 0, {}), 0, {}, 1.0, "normal")],
+                        {}, fxlib.PALETTES[0], {"beat_phase": 0.2}, {}, v)
+        r.render(st)
+        want = r.read().astype(int)
+        got = js(page, """
+            const c = document.createElement("canvas");
+            const frames = {get: () => { const k = document.createElement("canvas"); k.width = 160; k.height = 90;
+                const g = k.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, 160, 90);
+                g.fillStyle = "rgb(90,90,90)"; g.fillRect(0, 0, 80, 90); return k; }};
+            const r = new m.renderer.Renderer(c, 160, 90, frames);
+            const state = {t: 2, step: 0, pattern: 0, palette: m.fx.PALETTES[0], music: {beat_phase: 0.2},
+                lanes: [{voice: {shard: 0, step: 0}, frame: 0, fx: {}, opacity: 1, blend: "normal", strike: {}}],
+                master: {}, events: {}, visual: arg};
+            r.render(state);
+            const gl = r.gl, px = new Uint8Array(160 * 90 * 4);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, r.out[r._out].fbo);
+            gl.readPixels(0, 0, 160, 90, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            return {error: gl.getError(), px: Array.from(px)};""", v)
+        assert got["error"] == 0
+        web = np.flipud(np.array(got["px"], np.int64).reshape(90, 160, 4)[..., :3])
+        assert want.mean() > 10, preset
+        assert np.abs(web - want).mean() < 4, (preset, blend, np.abs(web - want).mean())
+    ctx.release()
 
 
 def test_program_matches(page):

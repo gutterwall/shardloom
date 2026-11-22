@@ -54,6 +54,14 @@ Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a n
     - **Colour lens:** a single-colour lens fades in over one of the overlay layers, a new random colour each time, holds, and fades away.
     - **Mirror:** folds one or more layers (**layers**) into a mirror (left and right), a quad mirror (four ways) or a kaleidoscope (3 to 12 **segments**). The fold can **zoom** in from the middle or bring mirrored copies in from the edges, as deep as **zoom depth**. **Leaf colours** gives each leaf of the mirror its own partial turn-over of red, green and blue, so every leaf has a different colour (new colours on each beat when on the beat). **On the beat**, the zoom punches in on every beat and the pattern turns a notch each beat; off, it zooms and turns smoothly through each strike.
 
+  - **Visuals:** **MilkDrop** draws a MilkDrop-style music visual live and mixes it into the stack of layers. Like the MilkDrop visualiser, each one is a feedback loop: every frame the last picture is zoomed, turned, rippled and dimmed, and a new wave and shapes, moved by the bass, mids, highs and beats, are drawn over it. There are ten of Shardloom's own: Nebula, Tunnel, Scope, Starburst, Ripple, Polygons, Kaleido bloom, Vortex, Aurora and Solar. Each strike picks one at random and picks how it goes in:
+    - **Plus** adds its light to the layers under it, **Minus** takes it away.
+    - **Occlude** covers them wherever it is drawn, and **Overlay** lightens and darkens them.
+    - **Multiply** shows them only where it is lit.
+    - **Background** puts it behind the whole picture, where it shows through the dark parts.
+
+    Except for Background, each strike also picks the layer it goes over, so the layers above it still cover it. Tick which visuals and which ways of mixing a strike may pick. A strike lasts 8 seconds and fades in and out, and visuals take turns: a new one starts only when the last has finished. They are Shardloom's own presets, not MilkDrop's, and Shardloom shares no code with MilkDrop.
+
   Each has three sliders: **how often** it strikes, **pulse** (left: between the beats, middle: anywhere, right: on the beats and hits) and **strength**. **try** sets one off in the preview now. Strikes follow the project's seed, so a render matches the preview every time.
 - **Shard timing:** hold each layer on one shard for beats at a time instead of cutting on every sequencer step. Each layer plays a shard for a length (¼, ½, 1, 2, 4, 6 or 8 beats, picked by your weights), from the same frame **plays of each shard** times over (4 by default), then moves on to a new shard and length. **Speed** leans every length shorter or longer, and **faster when intense** makes the intense parts of the song change shards more often (and the calm parts less). The panel shows each length's chance right now and what each layer is playing.
 

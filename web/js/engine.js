@@ -5,7 +5,8 @@ import * as fxlib from "./fx.js";
 import * as pacelib from "./pace.js";
 import { Step } from "./project.js";
 import { rand, pmod, pyround } from "./rand.js";
-import { LAYER, Scheduler, layerStrikes } from "./events.js";
+import { EVENTS, LAYER, Scheduler, layerStrikes, setting } from "./events.js";
+import * as visuallib from "./visuals.js";
 
 export class Engine {
   // shards: [{id, frames, energy, source_id}], analysis: an Analysis.
@@ -22,6 +23,7 @@ export class Engine {
     this.fill = false;
     this.punch = {};
     this.events = new Scheduler(this);
+    this._visualMusic = null;     // [seed, start, what its steps heard], as sequencer.Engine
     this.retime();
   }
 
@@ -35,6 +37,7 @@ export class Engine {
     this.analysis = a;
     this._palettes = [];
     this.events.reset();
+    this._visualMusic = null;
     this.reset();
   }
 
@@ -318,6 +321,21 @@ export class Engine {
     const bar = Math.floor(Math.max(0, this.beats(t)) / 4);
     const palette = p.palettes.length ? p.palettes[this.paletteIndex(bar) % p.palettes.length] : fxlib.PALETTES[0];
     const [pi] = this.patternForStep(g);
-    return { t, step: g, pattern: pi, lanes, master, palette, music, events: hits };
+    return { t, step: g, pattern: pi, lanes, master, palette, music, events: hits, visual: this.visual(hits, t) };
+  }
+
+  // The visual striking at t (visuals.strike) and what each of its steps heard, or null.
+  visual(hits, t) {
+    const hit = hits.visuals;
+    if (!hit) return null;
+    const t0 = this.events.started.visuals;
+    const v = visuallib.strike(this.project, setting(this.project, "visuals"), hit, t0, EVENTS.visuals.seconds);
+    if (!this._visualMusic || this._visualMusic[0] !== v.seed || this._visualMusic[1] !== t0) {
+      this._visualMusic = [v.seed, t0, []];
+    }
+    const heard = this._visualMusic[2];
+    while (heard.length <= v.steps) heard.push(visuallib.musicAt(this.analysis, t0 + heard.length / visuallib.RATE));
+    v.music = heard.slice(0, v.steps + 1);
+    return v;
   }
 }

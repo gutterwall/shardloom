@@ -4,9 +4,11 @@
 //   rate 0..1 how often, sync -1..1 between / any / on the pulses, strength 0..1 how hard, and an effect's options.
 
 import { rand, pmod, pyround } from "./rand.js";
+import { DEFAULT_OPTIONS as DEFAULT_VISUALS } from "./visuals.js";
 
 const E = (label, group, about, seconds, envelope, follows = "", bothWays = false, peak = 0.4, layer = false,
-  options = {}) => ({ label, group, about, seconds, envelope, follows, bothWays, peak, layer, options });
+  options = {}, stack = false) => ({ label, group, about, seconds, envelope, follows, bothWays, peak, layer, options,
+  stack });
 
 export const EVENTS = {
   datamosh: E("Datamosh", "Digital glitch", "Blocks smear the last frame along with the motion", 0.6, "flat"),
@@ -36,11 +38,16 @@ export const EVENTS = {
   // Last, so the effects before it keep their strikes (the index is part of each draw).
   flip: E("Colour flip", "Colour", "A strobe that turns over one or more of the red, green and blue " +
     "channels, a new mix on every flash", 1.5, "flat", "", false, 0.4, false, { flashes: 2 }),
+  // After flip for the same reason.
+  visuals: E("MilkDrop", "Visuals", "A MilkDrop-style music visual, drawn live and mixed into the layers: " +
+    "plus, minus, occlude, overlay, multiply or behind them as a background", 8.0, "fade", "", false, 0.25, false,
+    DEFAULT_VISUALS, true),
 };
 export const NAMES = Object.keys(EVENTS);
-export const PICTURE = NAMES.filter(n => !EVENTS[n].layer);   // the whole-picture ones, in shaders.EVENTS order
+// The whole-picture ones, in shaders.EVENTS order.
+export const PICTURE = NAMES.filter(n => !EVENTS[n].layer && !EVENTS[n].stack);
 export const LAYER = NAMES.filter(n => EVENTS[n].layer);      // the One layer ones
-export const GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer"];
+export const GROUPS = ["Digital glitch", "Analog", "Film", "Pyrotechnics", "Colour", "One layer", "Visuals"];
 
 export const MIRROR_STYLES = ["mirror", "quad", "kaleido"];   // shaders.EFFECTS fold_style 0, 1, 2
 export const MIRROR_ZOOMS = ["middle", "edges", "none"];
@@ -52,7 +59,10 @@ export function defaultSetting() {
 
 export function setting(project, name) {
   const ev = EVENTS[name];
-  return { ...defaultSetting(), ...(ev ? ev.options : {}), ...((project.shard_fx || {})[name] || {}) };
+  const out = { ...defaultSetting(), ...(ev ? ev.options : {}), ...((project.shard_fx || {})[name] || {}) };
+  // Lists (the visuals' presets and blends) are copied, so changing them never changes the defaults or the project.
+  for (const k of Object.keys(out)) if (Array.isArray(out[k])) out[k] = [...out[k]];
+  return out;
 }
 
 // 0..1 over a strike's life (age 0..1).
@@ -153,10 +163,32 @@ export class Scheduler {
     this.engine = engine;
     this.steps = new Map();
     this.manual = {};          // name -> time it was set off by hand (not saved)
+    // Effects drawn into the stack take turns (turns()): name -> [settings key, last step looked at, start steps].
+    this.turnsBy = {};
+    this.started = {};         // name -> when the strike at the last at() began (exactly)
   }
 
   reset() {
     this.steps.clear();
+    this.turnsBy = {};
+  }
+
+  // The steps up to now on which an effect that takes turns (the visuals) starts a strike: as any effect, but a new
+  // one only once the last has finished. Worked out from the first step on and kept, as events.Scheduler.turns().
+  turns(i, name, s, now) {
+    const p = this.engine.project;
+    const ev = EVENTS[name];
+    const key = JSON.stringify([p.seed, Number(s.rate), Number(s.sync)]);
+    let got = this.turnsBy[name];
+    if (!got || got[0] !== key) got = [key, -1, []];
+    const [, done, starts] = got;
+    for (let g = done + 1; g <= now; g++) {
+      const [t0, pulse] = this.step(g);
+      if (starts.length && t0 < this.step(starts[starts.length - 1])[0] + ev.seconds) continue;
+      if (rand(p.seed, 7919, i, g) < chance(Number(s.rate), Number(s.sync), pulse, ev.peak)) starts.push(g);
+    }
+    this.turnsBy[name] = [key, Math.max(done, now), starts];
+    return starts;
   }
 
   // [start time, pulse] of step g; the pulse is the beat itself and how hard the music hits there.
@@ -191,7 +223,15 @@ export class Scheduler {
       if (strength <= 0) return;
       let hit = null;
       let held = 0;            // Colour effects: the strongest of the strikes still going, so they join up
-      if (s.rate > 0) {
+      if (s.rate > 0 && ev.stack) {
+        const starts = this.turns(i, name, s, now);
+        let k = starts.length - 1;
+        while (k >= 0 && starts[k] > now) k--;
+        if (k >= 0) {
+          const t0 = this.step(starts[k])[0];
+          if (t0 <= t && t < t0 + ev.seconds) hit = [t0, rand(p.seed, 104729, i, starts[k])];
+        }
+      } else if (s.rate > 0) {
         for (let g = now; g >= 0; g--) {
           const [t0, pulse] = this.step(g);
           if (t0 < t - ev.seconds) break;
@@ -207,6 +247,7 @@ export class Scheduler {
         hit = [byHand, (byHand * 7.31) % 1];
       }
       if (hit === null) return;
+      this.started[name] = hit[0];
       const age = (t - hit[0]) / ev.seconds;
       let amount = strength * Math.max(held, envelope(ev.envelope, age));
       if (ev.follows) {

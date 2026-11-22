@@ -28,7 +28,7 @@ import numpy as np
 from imgui_bundle import hello_imgui, imgui, immapp
 from imgui_bundle import portable_file_dialogs as pfd
 
-from . import events, formats, library
+from . import events, formats, library, visuals
 from . import pace as pacelib
 from .compose import Composer, Program
 from .media import AudioPlayer, MediaError, decode_audio
@@ -1554,6 +1554,8 @@ class Editor:
                 self.flip_options(events.setting(p, "flip"))
             if group == "One layer":
                 self.mirror_options(events.setting(p, "mirror"))
+            if group == "Visuals":
+                self.visual_options(events.setting(p, "visuals"))
         imgui.spacing()
         imgui.text_disabled("Strikes fall the same way every time you play or render.")
 
@@ -1596,7 +1598,39 @@ class Editor:
         imgui.pop_id()
 
     def save_shard_fx(self, name: str, s: dict) -> None:
-        self.project.shard_fx[name] = {k: v if isinstance(v, (str, bool)) else round(float(v), 3) for k, v in s.items()}
+        self.project.shard_fx[name] = {k: v if isinstance(v, (str, bool)) else list(v) if isinstance(v, list)
+                                       else round(float(v), 3) for k, v in s.items()}
+
+    def visual_options(self, s: dict) -> None:
+        """The visuals' own settings: which presets and ways of mixing in a strike may pick."""
+        imgui.push_id("visual_options")
+        imgui.spacing()
+        changed = False
+        for key, every, title, tip in (
+                ("blends", {k: (label, about) for k, (label, about, _) in visuals.BLENDS.items()}, "Mixed in as",
+                 "Each strike picks one of these, and one of the layers to go over."),
+                ("presets", {k: (p["label"], "") for k, p in visuals.PRESETS.items()}, "Visuals",
+                 "Each strike draws one of these, picked at random.")):
+            imgui.text_disabled(title)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(tip)
+            imgui.indent()
+            on = visuals.enabled(s, key, every)
+            for k, name in enumerate(every):
+                label, about = every[name]
+                if k % 3:
+                    imgui.same_line()
+                ch, keep = imgui.checkbox(label, name in on)
+                if about and imgui.is_item_hovered():
+                    imgui.set_tooltip(about)
+                if ch:
+                    on = [n for n in every if (n == name and keep) or (n != name and n in on)]
+                    # At least one stays on.
+                    s[key], changed = on or [name], True
+            imgui.unindent()
+        imgui.pop_id()
+        if changed:
+            self.save_shard_fx("visuals", s)
 
     def mirror_options(self, s: dict) -> None:
         """The mirror's own settings, under the One layer effects."""
