@@ -15,8 +15,48 @@ export const Pattern = (o = {}) => ({ name: "A", length: 16, steps: [], ...o });
 export const Modulation = (o = {}) => ({ source: "bass", target: "master.zoom", amount: 0.3, ...o });
 
 // A video or photo the pool is cut from; path is inside the project ("media/name").
+// ranges (videos): several parts to cut from, [[from, to], ...] (the trim editor); empty: start/end. With several,
+// start/end hold the first, so an older Shardloom still opens the project.
 export const Source = (o = {}) => ({ path: "", kind: "video", id: "", enabled: true, weight: 1, start: 0, end: null,
-  motion: "random", shards: 2, ...o });
+  motion: "random", shards: 2, ranges: [], ...o });
+
+// The parts of a video shards are cut from: [from, to] seconds within duration, in order (as Source.spans).
+export function sourceSpans(s, duration) {
+  if (!s.ranges || !s.ranges.length) {
+    const start = Math.min(Math.max(0, s.start), duration);
+    const end = s.end === null || s.end === undefined ? duration : Math.min(Math.max(s.end, start), duration);
+    return [[start, end]];
+  }
+  const out = [];
+  const sorted = s.ranges.map(([a, b]) => [Number(a), Number(b)]).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  for (let [a, b] of sorted) {
+    a = Math.min(Math.max(0, a), duration);
+    b = Math.min(Math.max(b, a), duration);
+    if (b <= a) continue;
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+// Keeps the parts the trim editor gives (as Source.set_spans): one in start/end, several in ranges; none: the
+// whole video.
+export function setSourceSpans(s, spans, duration) {
+  const r3 = v => Math.round(v * 1000) / 1000;
+  const clean = spans && spans.length
+    ? sourceSpans({ ranges: spans }, duration).map(([a, b]) => [r3(a), r3(b)]).filter(([a, b]) => b - a >= 0.05) : [];
+  s.ranges = [];
+  s.start = 0;
+  s.end = null;
+  if (clean.length === 1) {
+    s.start = clean[0][0];
+    s.end = clean[0][1] >= duration - 0.05 ? null : clean[0][1];
+  } else if (clean.length) {
+    s.ranges = clean;
+    [s.start, s.end] = clean[0];
+  }
+}
 
 export const Title = (o = {}) => ({ text: "Title", subtitle: "", at: "start", duration: 4, extra: false,
   background: "none", colour: "#000000", image: "", text_colour: "#ffffff", font: "", size: 0.1,

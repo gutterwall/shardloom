@@ -16,7 +16,8 @@ import { Engine } from "./engine.js";
 import { Program } from "./program.js";
 import { Renderer } from "./renderer.js";
 import { POSITIONS, FONTS } from "./titles.js";
-import { Lane, Title, Modulation, Source, CHOICES, fromDict, normalise, starterProject, newSourceId, kindOf } from "./project.js";
+import { TrimEditor } from "./trim.js";
+import { Lane, Title, Modulation, Source, CHOICES, fromDict, normalise, starterProject, newSourceId, kindOf, sourceSpans } from "./project.js";
 
 export const VERSION = "0.10.0";
 
@@ -34,6 +35,7 @@ const S = {
   engine: null, program: null, renderer: null, canvas: null, player: null,
   T: 0, tab: "media", selTitle: 0, pattern: 0,
   busy: null, toast: null, dialog: null, renders: [],
+  trim: null,                     // the trim editor while open: {src, blob}
   needDraw: true, usage: null,
 };
 let update = () => {};
@@ -168,7 +170,8 @@ function closeProject() {
   if (S.renderer) S.renderer.dispose();
   for (const url of Object.values(S.thumbs)) URL.revokeObjectURL(url);
   Object.assign(S, { id: null, project: null, files: new Map(), info: {}, thumbs: {}, song: null, analysis: null,
-    pool: null, frames: null, engine: null, program: null, renderer: null, canvas: null, player: null, renders: [] });
+    pool: null, frames: null, engine: null, program: null, renderer: null, canvas: null, player: null, renders: [],
+    trim: null });
 }
 
 let saveTimer = null;
@@ -753,6 +756,18 @@ function MediaPanel() {
 }
 const cutShards = () => cut();
 
+// Opens the trim editor on a video of the project.
+async function openTrim(s) {
+  try {
+    const blob = await fileBlob(s.path);
+    if (S.player && S.player.playing) pause();
+    S.trim = { src: s, blob };
+    update();
+  } catch (e) {
+    say(e.message);
+  }
+}
+
 function SourceCard({ s, i }) {
   const p = S.project;
   const info = S.info[s.path];
@@ -779,7 +794,7 @@ function SourceCard({ s, i }) {
           onChange=${e => { s.enabled = e.currentTarget.checked; changed(); }} />
         ${S.thumbs[s.path] ? html`<img class="thumb" src=${S.thumbs[s.path]} alt="" />` : html`<div class="thumb"></div>`}
         <div style="min-width:0"><div class="name">${s.path.split("/").pop()}</div>
-          <div class="faint">${s.kind}${info ? ` · ${info.width}×${info.height}${s.kind === "video" ? ` · ${clock(info.duration)}` : ""}` : ""}</div></div>
+          <div class="faint">${s.kind}${info ? ` · ${info.width}×${info.height}${s.kind === "video" ? ` · ${clock(info.duration)}` : ""}` : ""}${s.ranges && s.ranges.length ? ` · ${s.ranges.length} parts` : ""}</div></div>
         <div class="row tight">
           <button class="small ghost" aria-label="Move up" onClick=${e => { e.preventDefault(); move(-1); }}>↑</button>
           <button class="small ghost" aria-label="Move down" onClick=${e => { e.preventDefault(); move(1); }}>↓</button>
@@ -790,11 +805,15 @@ function SourceCard({ s, i }) {
     ${s.kind === "video" ? html`
       <${Slider} label="share of cuts" value=${s.weight} min=${0} max=${4} step=${0.1} fmt=${v => `×${v.toFixed(1)}`}
         on=${v => { s.weight = v; changed(); }} />
+      ${s.ranges && s.ranges.length ? html`<p class="faint">${s.ranges.length} parts, ${clock(sourceSpans(s, info ? info.duration : 1e9)
+        .reduce((n, [a, b]) => n + b - a, 0))} used</p>` : html`
       <${Slider} label="from" value=${s.start} min=${0} max=${info ? info.duration : 60} step=${0.1} fmt=${v => `${v.toFixed(1)} s`}
         on=${v => { s.start = v; if (s.end !== null && s.end < v) s.end = v; changed(); }} />
       <${Slider} label="to" value=${s.end === null ? (info ? info.duration : 60) : s.end} min=${0} max=${info ? info.duration : 60}
         step=${0.1} fmt=${v => `${v.toFixed(1)} s`}
-        on=${v => { s.end = info && v >= info.duration - 0.05 ? null : Math.max(v, s.start); changed(); }} />`
+        on=${v => { s.end = info && v >= info.duration - 0.05 ? null : Math.max(v, s.start); changed(); }} />`}
+      <div class="row"><button class="small" onClick=${() => openTrim(s)}>Trim…</button>
+        <span class="faint">Watch the video and choose the parts shards are cut from.</span></div>`
     : html`
       <${Field} label="motion"><${Select} value=${s.motion} on=${v => { s.motion = v; changed(); }}
         options=${[["still", "still"], ["zoom_in", "zoom in"], ["zoom_out", "zoom out"], ["pan", "pan"], ["random", "random"]]} /></${Field}>
@@ -1241,6 +1260,8 @@ function App() {
   const [, tick] = useState(0);
   update = () => tick(n => n + 1);
   return html`${S.view === "edit" && S.project ? html`<${Editor} />` : html`<${Projects} />`}
+    ${S.trim && S.project && html`<${TrimEditor} key=${S.trim.src.id} src=${S.trim.src} blob=${S.trim.blob}
+      shortest=${Number(S.project.cut.min ?? 0.25)} onChange=${() => changed()} onClose=${() => { S.trim = null; update(); }} />`}
     <${Busy} />${S.toast && html`<div class="toast" role="alert">${S.toast}</div>`}<${Dialog} />`;
 }
 

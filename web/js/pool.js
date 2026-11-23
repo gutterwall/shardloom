@@ -4,6 +4,7 @@
 import * as store from "./store.js";
 import { PyRandom, pyround } from "./rand.js";
 import { coverBox } from "./titles.js";
+import { sourceSpans } from "./project.js";
 
 // ---- cutting -------------------------------------------------------------------
 
@@ -36,7 +37,7 @@ export function recipe(project, width, height) {
     size: [width, height], fps: project.fps,
     cut: ["count", "min", "max", "seed"].map(k => project.cut[k]),
     sources: project.sources.filter(s => s.enabled)
-      .map(s => [s.path, s.kind, s.id, s.weight, s.start, s.end, s.motion, s.shards]),
+      .map(s => [s.path, s.kind, s.id, s.weight, s.start, s.end, s.motion, s.shards, ...(s.ranges && s.ranges.length ? [s.ranges] : [])]),
   });
 }
 
@@ -153,14 +154,11 @@ export async function buildPool(project, projectId, files, width, height, progre
   await store.delPrefix("frames", prefix);
   try {
     for (const s of videos) grabbers.push(await new VideoGrabber(await files.blob(s.path)).open());
-    const spans = videos.map((s, i) => {
-      const d = grabbers[i].duration;
-      const start = Math.min(Math.max(0, s.start), d);
-      const end = s.end === null || s.end === undefined ? d : Math.min(Math.max(s.end, start), d);
-      return [start, end - start];
-    });
-    const cuts = planCuts(spans.map(([, l]) => l), videos.length ? Math.trunc(cut.count ?? 48) : 0, minLen, maxLen,
-      rng, videos.map(s => s.weight));
+    // Each part of each video (sourceSpans) is cut from as if it were a video of its own: a video with one part
+    // cuts exactly as before parts.
+    const spans = videos.flatMap((s, vi) => sourceSpans(s, grabbers[vi].duration).map(([a, b]) => [vi, a, b - a]));
+    const cuts = planCuts(spans.map(([, , l]) => l), videos.length ? Math.trunc(cut.count ?? 48) : 0, minLen, maxLen,
+      rng, spans.map(([vi]) => videos[vi].weight));
     const total = cuts.length + photos.reduce((a, p) => a + Math.max(1, p.shards), 0);
 
     const add = async (frames, smalls, src, start, length) => {
@@ -172,14 +170,15 @@ export async function buildPool(project, projectId, files, width, height, progre
       progress(shards.length, total);
     };
 
-    for (const [vi, start, length] of cuts) {
+    for (const [si, start, length] of cuts) {
       if (cancelled()) throw new Error("cancelled");
+      const [vi, origin] = spans[si];
       const g = grabbers[vi];
       const count = Math.max(1, pyround(length * fps));
       const frames = [], smalls = [];
       let last = null;
       for (let k = 0; k < count; k++) {
-        await g.seek(spans[vi][0] + start + k / fps);
+        await g.seek(origin + start + k / fps);
         // A frame the same as the one before (a slower source) is stored once more by reference.
         framer.draw(g.video, g.width, g.height);
         const [blob, px] = await framer.take();
@@ -188,7 +187,7 @@ export async function buildPool(project, projectId, files, width, height, progre
         last = blob;
       }
       if (!last) throw new Error("no frames");
-      await add(frames, smalls, videos[vi], spans[vi][0] + start, length);
+      await add(frames, smalls, videos[vi], origin + start, length);
     }
     for (const p of photos) {
       const img = await createImageBitmap(await files.blob(p.path), { imageOrientation: "from-image" });

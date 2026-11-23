@@ -355,3 +355,127 @@ def test_packed_projects_move_both_ways(page, tmp_path):
     q = Project.load(back)
     assert q.to_dict() == p.to_dict()
     assert (back / "media" / "clip.mp4").read_bytes() == (folder / "media" / "clip.mp4").read_bytes()
+
+
+def test_video_parts_match(page):
+    from shardloom.sequencer import Source
+
+    cases = [({}, 10.0), ({"start": 1.0, "end": 4.0}, 10.0), ({"start": 12.0}, 10.0),
+             ({"ranges": [[6.0, 8.0], [1.0, 2.0], [7.5, 9.0], [-1.0, 0.5], [11.0, 12.0], [3.0, 3.0]]}, 10.0)]
+    want = [[list(x) for x in Source(**c).spans(d)] for c, d in cases]
+    got = js(page, "return arg.map(([c, d]) => m.project.sourceSpans(m.project.Source(c), d));", cases)
+    assert got == want
+    sets = [([[2.0, 5.0]], 10.0), ([[2.0, 10.0]], 10.0), ([[6.0, 7.0], [1.0, 2.5]], 10.0), ([], 10.0),
+            ([[1.0, 1.02], [3.0, 4.0]], 10.0)]
+    want = []
+    for spans, d in sets:
+        s = Source()
+        s.set_spans(spans, d)
+        want.append([s.start, s.end, s.ranges])
+    got = js(page, """return arg.map(([spans, d]) => { const s = m.project.Source();
+        m.project.setSourceSpans(s, spans, d); return [s.start, s.end, s.ranges]; });""", sets)
+    assert got == want
+
+
+def test_trim_edits_match(page):
+    from shardloom import trim
+
+    rng = random.Random(11)
+    ops = []
+    for _ in range(300):
+        ops.append([rng.choice(["in", "out", "add", "drag"]), round(rng.uniform(-1, 31), 2), rng.randint(0, 1)])
+    duration = 30.0
+
+    def run_python():
+        spans, sel, seen = [[0.0, duration]], 0, []
+        for op, t, side in ops:
+            if op == "in":
+                sel = trim.mark_in(spans, sel, t, duration)
+            elif op == "out":
+                sel = trim.mark_out(spans, sel, t, duration)
+            elif op == "add":
+                sel = trim.add_part(spans, t, duration)
+            elif sel is not None:
+                trim.drag_end(spans, sel, side, t, duration)
+            seen.append([[list(x) for x in spans], sel])
+        return seen
+
+    got = js(page, """const d = 30; let spans = [[0, d]], sel = 0; const seen = [];
+        for (const [op, t, side] of arg) {
+          if (op === "in") sel = m.trim.markIn(spans, sel, t, d);
+          else if (op === "out") sel = m.trim.markOut(spans, sel, t, d);
+          else if (op === "add") sel = m.trim.addPart(spans, t, d);
+          else if (sel !== null) m.trim.dragEnd(spans, sel, side, t, d);
+          seen.push([spans.map(s => [...s]), sel]);
+        }
+        return seen;""", ops)
+    want = run_python()
+    assert got == want
+    assert len(want[-1][0]) > 3          # the run made several parts
+
+
+def test_trim_editor_in_the_page(page, tmp_path):
+    """The trim editor plays a video and keeps the parts marked on it in the source."""
+    import av
+
+    path = tmp_path / "clip.webm"
+    with av.open(str(path), "w") as c:
+        st = c.add_stream("libvpx", rate=30)
+        st.width, st.height, st.pix_fmt = 160, 96, "yuv420p"
+        for i in range(90):
+            img = np.zeros((96, 160, 3), np.uint8)
+            img[:, (i * 2) % 160:(i * 2) % 160 + 20] = 255
+            for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+                c.mux(pkt)
+        for pkt in st.encode():
+            c.mux(pkt)
+    data = base64.b64encode(path.read_bytes()).decode()
+    got = js(page, """const { html, render } = await import("/web/vendor/standalone.module.js");
+        const bytes = Uint8Array.from(atob(arg), c => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "video/webm" });
+        const src = m.project.Source({ path: "media/clip.webm", id: "s1" });
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        let changes = 0, closed = false;
+        render(html`<${m.trim.TrimEditor} src=${src} blob=${blob} shortest=${0.25}
+          onChange=${() => { changes++; }} onClose=${() => { closed = true; }} />`, host);
+        const until = async (f, ms = 8000) => { const end = Date.now() + ms;
+          while (Date.now() < end) { if (f()) return true; await new Promise(r => setTimeout(r, 20)); } return false; };
+        const button = text => [...host.querySelectorAll("button")].find(b => b.textContent.trim() === text);
+        const video = host.querySelector("video");
+        if (!await until(() => video.readyState >= 1 && host.textContent.includes("long"))) return { error: "no video" };
+        const seekTo = async t => { video.currentTime = t; video.dispatchEvent(new Event("pause"));
+          await new Promise(r => setTimeout(r, 50)); };
+        // Mark 0.5-1.0 by the playhead, then add a part at 2.0.
+        const strip = host.querySelector(".trim-strip");
+        const r = strip.getBoundingClientRect();
+        const at = t => ({ clientX: r.left + t / 3 * r.width, clientY: r.top + 10, pointerId: 1, bubbles: true });
+        const tap = t => { strip.dispatchEvent(new PointerEvent("pointerdown", at(t))); strip.dispatchEvent(new PointerEvent("pointerup", at(t))); };
+        tap(0.5); await new Promise(r => setTimeout(r, 30));
+        button("Set start").click(); await new Promise(r => setTimeout(r, 30));
+        tap(1.0); await new Promise(r => setTimeout(r, 30));
+        button("Set stop").click(); await new Promise(r => setTimeout(r, 30));
+        const one = [src.start, src.end, src.ranges.length];
+        tap(2.0); await new Promise(r => setTimeout(r, 30));
+        button("Add part").click(); await new Promise(r => setTimeout(r, 30));
+        const two = src.ranges.map(x => [...x]);
+        const parts = host.querySelectorAll(".trim-part").length;
+        // Drag the stop of part 2 back to 2.5.
+        strip.dispatchEvent(new PointerEvent("pointerdown", at(3.0)));
+        strip.dispatchEvent(new PointerEvent("pointermove", at(2.5)));
+        strip.dispatchEvent(new PointerEvent("pointerup", at(2.5)));
+        await new Promise(r => setTimeout(r, 30));
+        const dragged = src.ranges.map(x => [...x]);
+        button("play").click();
+        const played = await until(() => !video.paused, 3000);
+        button("Done").click();
+        render(null, host);
+        host.remove();
+        return { one, two, parts, dragged, played, changes, closed };""", data)
+    if got.get("error"):
+        pytest.skip("this browser can't play the test video")
+    assert got["one"] == [0.5, 1.0, 0]
+    assert got["two"] == [[0.5, 1.0], [2.0, pytest.approx(3.0, abs=0.05)]]
+    assert got["parts"] == 2
+    assert got["dragged"] == [[0.5, 1.0], [2.0, 2.5]]
+    assert got["played"] and got["closed"] and got["changes"] >= 4
