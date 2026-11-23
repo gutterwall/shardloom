@@ -235,15 +235,15 @@ uniform sampler2D tex;       // the picture so far
 uniform sampler2D prev;      // the last finished frame, for datamosh
 uniform vec2 res;
 uniform float time;
-uniform float amt[17];
-uniform float age[17];
-uniform float sd[17];
+uniform float amt[18];
+uniform float age[18];
+uniform float sd[18];
 in vec2 uv;
 out vec4 color;
 
 const int DATAMOSH = 0, PIXEL_SORT = 1, CORRUPT = 2, TEAR = 3, VHS = 4, CRT = 5, ROLL = 6, BLEED = 7,
           BURN = 8, LEAK = 9, DAMAGE = 10, FIREWORKS = 11, EXPLOSION = 12, HUE = 13, BRIGHT = 14, SAT = 15,
-          FLIP = 16;
+          FLIP = 16, ERASE = 17;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float hash1(float x) { return fract(sin(x * 91.3458 + 3.17) * 47453.5453); }
@@ -450,6 +450,33 @@ void main() {
         c = mix(c, vec3(snow), band_in * 0.6 * a);
         c = mix(c, vec3(luma(c)), 0.35 * a);
         c += (hash(uv * res * 0.5 + time) - 0.5) * 0.08 * a;
+    }
+    a = amt[ERASE];
+    if (a > 0.0) {
+        // Worn, half-erased tape: blocky snow eats in from the edges along a ragged front that wanders, and fills
+        // the dark parts; blocks of snow scatter just inside the front, and dropouts streak across in white.
+        // Sizes go by the picture's height, so a render looks like the preview at any size.
+        float t = floor(time * 30.0);
+        float s = sd[ERASE] * 100.0;
+        vec2 e = min(uv, 1.0 - uv) * asp;
+        float edge = min(e.x, e.y);
+        float front = (0.04 + 0.3 * a) * (0.45 + 1.1 * fbm(uv * vec2(3.0, 4.0) + vec2(s, time * 0.6)));
+        float eaten = smoothstep(front, front * 0.3, edge);
+        float dark = smoothstep(0.08 + 0.3 * a, 0.0, luma(c)) * a;
+        float cellh = max(1.0, res.y / (110.0 + 90.0 * hash1(s)));            // tape snow: blocks wider than tall
+        vec2 blk = floor(uv * res / vec2(cellh * 2.5, cellh));
+        float n = hash(blk + vec2(t * 13.1, s));
+        vec3 snow = vec3(n) * vec3(0.92 + 0.16 * hash(blk + t + 1.7), 1.0, 0.92 + 0.16 * hash(blk + t + 3.1));
+        float m = clamp(max(eaten, dark * 0.85), 0.0, 1.0) * (0.55 + 0.45 * a);
+        m = max(m, step(hash(floor(blk / 2.0) + vec2(t * 7.0, s)), 0.18 * a) * smoothstep(front * 1.7, front, edge));
+        c = mix(c, snow, m);
+        float row = floor(uv.y * res.y / max(1.0, res.y / 240.0));
+        if (hash(vec2(row, t + s)) < 0.01 * a) {
+            float x0 = hash(vec2(row + 5.0, t)) * 1.1 - 0.1;
+            float len = 0.03 + 0.25 * hash(vec2(t, row + 9.0));
+            c = mix(c, vec3(0.96), 0.85 * step(x0, uv.x) * step(uv.x, x0 + len));
+        }
+        c = mix(c, vec3(luma(c)), 0.3 * a) * (1.0 - 0.1 * a) + 0.05 * a;    // faded: less colour, lifted blacks
     }
     a = amt[CRT];
     if (a > 0.0) {

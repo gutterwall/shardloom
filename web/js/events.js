@@ -42,6 +42,9 @@ export const EVENTS = {
   visuals: E("MilkDrop", "Visuals", "A MilkDrop-style music visual, drawn live and mixed into the layers: " +
     "plus, minus, occlude, overlay, multiply or behind them as a background", 8.0, "fade", "", false, 0.25, false,
     DEFAULT_VISUALS, true),
+  // After visuals for the same reason.
+  erase: E("Tape erase", "Analog", "Worn, half-erased tape: blocky snow eats in from the edges and the dark " +
+    "parts, with dropouts", 1.2, "swell"),
 };
 export const NAMES = Object.keys(EVENTS);
 // The whole-picture ones, in shaders.EVENTS order.

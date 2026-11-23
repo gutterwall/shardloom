@@ -150,7 +150,7 @@ def struck(e, name, t):
 
 def test_layer_effects_are_not_drawn_on_the_whole_picture():
     assert set(events.LAYER) == {"lens", "mirror"}
-    assert events.PICTURE == events.NAMES[:16] + ["flip"]   # the whole-picture shader's indices are unchanged
+    assert events.PICTURE == events.NAMES[:16] + ["flip", "erase"]   # the whole-picture shader's indices are unchanged
     assert all(events.EVENTS[n].group == "One layer" for n in events.LAYER)
 
 
@@ -367,3 +367,46 @@ def test_each_leaf_is_turned_over_differently(ctx):  # noqa: F811
     hues = {tuple(k[y, x] // 32) for y, x in [(H // 2 + int(H * 0.3 * math.sin(a)), W // 2 + int(H * 0.3 * math.cos(a)))
                                                  for a in np.arange(0.1, math.tau, math.tau / 12)]}
     assert len(hues) >= 6                                         # twelve leaves, many colours
+
+
+def test_tape_erase_snows_over_the_edges_and_the_dark_parts(ctx):  # noqa: F811
+    """Tape erase: blocky snow at the edges and in the dark parts; the middle of a bright picture is left alone."""
+    import moderngl
+
+    from shardloom import shaders
+
+    w, h = 320, 180
+    img = np.full((h, w, 3), 150, np.uint8)
+    img[110:170, 20:120] = 0                                  # a dark part, away from the edges
+    prog = ctx.program(vertex_shader=shaders.VERTEX, fragment_shader=shaders.EVENTS)
+    quad = ctx.buffer(np.array([-1, -1, 1, -1, -1, 1, 1, 1], "f4").tobytes())
+    vao = ctx.vertex_array(prog, [(quad, "2f", "pos")])
+    tex = ctx.texture((w, h), 3, np.ascontiguousarray(img[::-1]).tobytes())
+    out = ctx.texture((w, h), 3)
+    fbo = ctx.framebuffer([out])
+    tex.use(0)
+    tex.use(1)
+    prog["tex"].value, prog["prev"].value, prog["res"].value = 0, 1, (w, h)
+    n = len(events.PICTURE)
+
+    def draw(a, t):
+        amt = [0.0] * n
+        amt[events.PICTURE.index("erase")] = a
+        for name, vals in (("amt", amt), ("age", [0.5] * n), ("sd", [0.3] * n)):
+            if name in prog:
+                prog[name].value = vals[:prog[name].array_length]
+        prog["time"].value = t
+        fbo.use()
+        vao.render(moderngl.TRIANGLE_STRIP)
+        return np.frombuffer(fbo.read(components=3), np.uint8).reshape(h, w, 3)[::-1].astype(int)
+
+    plain = draw(0.0, 1.0)
+    assert np.array_equal(plain, img)
+    hit = draw(0.8, 1.0)
+    edge = hit[:6].std()
+    middle = hit[70:100, 140:200]
+    assert edge > 40                                          # snow along the top
+    assert hit[125:155, 40:100].std() > 30                    # and in the dark part
+    # The bright middle only fades a little: most of it is left near its grey.
+    assert (np.abs(middle - 150).max(axis=2) < 30).mean() > 0.8
+    assert not np.array_equal(draw(0.8, 1.05)[:6], hit[:6])   # the snow changes from frame to frame
