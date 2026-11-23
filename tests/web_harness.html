@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <title>Shardloom web tests</title>
 <script type="module">
-  const names = ["rand", "analysis", "engine", "project", "pool", "program", "renderer", "events", "fx", "pace", "pack", "visuals"];
+  const names = ["rand", "analysis", "engine", "project", "pool", "program", "renderer", "events", "fx", "pace", "pack", "visuals", "trim"];
   const mods = {};
   for (const n of names) mods[n] = await import(`/web/js/${n}.js`);
   window.mods = mods;

@@ -245,7 +245,7 @@ def recipe(project: Project, width: int, height: int) -> str:
     data = {
         "size": [width, height], "fps": project.fps, "store": SHARD_STORE,
         "cut": {k: project.cut.get(k) for k in ("count", "min", "max", "seed")},
-        "sources": [[s.path, s.kind, s.id, s.weight, s.start, s.end, s.motion, s.shards]
+        "sources": [[s.path, s.kind, s.id, s.weight, s.start, s.end, s.motion, s.shards] + ([s.ranges] if s.ranges else [])
                     for s in project.sources if s.enabled],
     }
     return hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
@@ -291,13 +291,12 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
     decoders = None
     try:
         decoders = Decoders([project_path(directory, s.path) for s in videos], width, height, fps)
-        spans = []
-        for s, duration in zip(videos, decoders.durations):
-            start = min(max(0.0, s.start), duration)
-            end = duration if s.end is None else min(max(s.end, start), duration)
-            spans.append((start, end - start))
-        cuts = plan_cuts([length for _, length in spans], int(cut.get("count", 48)) if videos else 0,
-                         min_len, max_len, rng, weights=[s.weight for s in videos])
+        # Each part of each video (Source.spans) is cut from as if it were a video of its own: a video with one
+        # part cuts exactly as before parts.
+        spans = [(vi, a, b - a) for vi, (s, duration) in enumerate(zip(videos, decoders.durations))
+                 for a, b in s.spans(duration)]
+        cuts = plan_cuts([length for _, _, length in spans], int(cut.get("count", 48)) if videos else 0,
+                         min_len, max_len, rng, weights=[videos[vi].weight for vi, _, _ in spans])
         total = len(cuts) + sum(max(1, p.shards) for p in photos)
         done = 0
 
@@ -315,10 +314,10 @@ def build_pool(project: Project, directory: str | os.PathLike, width: int, heigh
             if progress:
                 progress(done, total)
 
-        for vi, start, length in cuts:
+        for si, start, length in cuts:
+            vi, origin, _ = spans[si]
             d = decoders[vi]
-            add(d.segment_length(length), d.iter_segment(spans[vi][0] + start, length), videos[vi],
-                spans[vi][0] + start, length)
+            add(d.segment_length(length), d.iter_segment(origin + start, length), videos[vi], origin + start, length)
         for p in photos:
             img = load_photo(project_path(directory, p.path))
             for _ in range(max(1, p.shards)):

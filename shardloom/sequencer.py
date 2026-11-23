@@ -78,6 +78,43 @@ class Source:
     end: float | None = None       # ...to here (None: the end)
     motion: str = "random"         # photos: still, zoom_in, zoom_out, pan, random
     shards: int = 2                # photos: how many shards to make
+    # Videos: several parts to cut from, [[from, to], ...] (the trim editor); empty: start/end above. With several,
+    # start/end hold the first, so an older Shardloom still opens the project.
+    ranges: list[list[float]] = field(default_factory=list)
+
+    def spans(self, duration: float) -> list[tuple[float, float]]:
+        """The parts of the video shards are cut from: (from, to) seconds within duration, in order."""
+        if not self.ranges:
+            start = min(max(0.0, self.start), duration)
+            end = duration if self.end is None else min(max(self.end, start), duration)
+            return [(start, end)]
+        out: list[tuple[float, float]] = []
+        for a, b in sorted((float(a), float(b)) for a, b in self.ranges):
+            a = min(max(0.0, a), duration)
+            b = min(max(b, a), duration)
+            if b <= a:
+                continue
+            if out and a <= out[-1][1]:
+                out[-1] = (out[-1][0], max(out[-1][1], b))
+            else:
+                out.append((a, b))
+        return out
+
+    def set_spans(self, spans, duration: float) -> None:
+        """Keeps the parts the trim editor gives: one in start/end (as before ranges), several in ranges.
+        None or no parts: the whole video."""
+        self.ranges = []
+        self.start, self.end = 0.0, None
+        if spans:
+            self.ranges = [[a, b] for a, b in spans]
+            clean = [(round(a, 3), round(b, 3)) for a, b in self.spans(duration) if b - a >= 0.05]
+            self.ranges = []
+            if len(clean) == 1:
+                a, b = clean[0]
+                self.start, self.end = a, (None if b >= duration - 0.05 else b)
+            elif clean:
+                self.ranges = [[a, b] for a, b in clean]
+                self.start, self.end = clean[0]
 
 
 @dataclass

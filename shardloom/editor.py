@@ -34,6 +34,7 @@ from .compose import Composer, Program
 from .media import AudioPlayer, MediaError, decode_audio
 from .sequencer import Project, Title, project_path, starter_project
 from .titles import BACKGROUNDS, POSITIONS, font_names, hex_rgb
+from .trim import TrimWindow
 
 MUSIC = ["Music", " ".join(f"*{e}" for e in sorted(library.MUSIC_EXT)), "All files", "*"]
 MEDIA = ["Videos and photos", " ".join(f"*{e}" for e in sorted(library.VIDEO_EXT | library.PHOTO_EXT | library.MUSIC_EXT)),
@@ -167,6 +168,7 @@ class Editor:
         self.dirty = False
         self._curve_cache: tuple | None = None
         self.show_about = False
+        self.trim: TrimWindow | None = None        # the trim editor, while it is open
 
     # ---- messages and tasks --------------------------------------------
 
@@ -265,6 +267,7 @@ class Editor:
     def close_project(self) -> None:
         # A cut belongs to the project it was started in.
         self.cancel_task("Cutting shards")
+        self.close_trim()
         if self.project and self.dir and self.dirty:
             self.save()
         self.drop_session()
@@ -277,6 +280,22 @@ class Editor:
         self.song = None
         self.project = None
         self.dir = None
+
+    def open_trim(self, src) -> None:
+        """Opens the trim editor on a video of the project (closing the one open)."""
+        self.close_trim()
+        try:
+            self.trim = TrimWindow(self.ctx, self.dir, src, float(self.project.cut.get("min", 0.25)))
+        except Exception as e:
+            self.say(f"Can't open {Path(src.path).name}: {e}")
+            return
+        if self.audio and self.audio.playing:
+            self.audio.pause()
+
+    def close_trim(self) -> None:
+        if self.trim:
+            self.trim.close()
+            self.trim = None
 
     def save(self) -> None:
         if not self.project:
@@ -789,7 +808,7 @@ class Editor:
         io = imgui.get_io()
         if io.key_ctrl and imgui.is_key_pressed(imgui.Key.s, False):
             self.save()
-        if io.want_text_input:
+        if io.want_text_input or (self.trim and self.trim.focused):
             return
         if imgui.is_key_pressed(imgui.Key.space, False):
             self.play()
@@ -863,6 +882,9 @@ class Editor:
     def gui(self) -> None:
         if not self.project:
             self.welcome()
+        if self.trim:
+            if self.project is None or self.trim.src not in self.project.sources or not self.trim.draw():
+                self.close_trim()
         if self.render_job:
             self.render_modal()
         if self.show_about:
@@ -929,6 +951,9 @@ class Editor:
                 "Edit workspace",
                 "   Space play / pause     Home to the start     Left / Right 5 seconds     Ctrl+S save",
                 "   Click the timeline to move the playhead; drag the ends of the song strip to trim the song.",
+                "Trim editor (Media > a video > Trim..., or double-click its picture)",
+                "   Space play     I set start     O set stop     A add a part     Del delete it     Left / Right a frame",
+                "   Drag a part's ends on the strip; double-click the strip to add a part there.",
                 "Perform workspace (the instrument)",
                 "   Space play     1-9 next pattern     F fill     R record live moves     Tab hide the panels",
                 "   Hold Z X C V B N M for invert, rgb split, kaleido, strobe, trails, glitch, mirror",
@@ -990,6 +1015,11 @@ class Editor:
                 imgui.image(imgui.ImTextureRef(tex.glo), V2(th * tex.width / tex.height, th))
             else:
                 imgui.dummy(V2(th * 16 / 9, th))
+            if s.kind == "video":
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip("Double-click to trim")
+                    if imgui.is_mouse_double_clicked(imgui.MouseButton_.left):
+                        self.open_trim(s)
             imgui.same_line()
             imgui.begin_group()
             name = Path(s.path).name
@@ -999,6 +1029,8 @@ class Editor:
             detail = kind
             if info:
                 detail += f"  {info['width']}x{info['height']}" + (f"  {clock(info['duration'])}" if s.kind == "video" else "")
+            if s.kind == "video" and s.ranges:
+                detail += f"  {len(s.ranges)} parts"
             imgui.text_disabled(detail)
             imgui.end_group()
             imgui.same_line(right - 64)
@@ -1015,16 +1047,25 @@ class Editor:
                     imgui.set_next_item_width(140)
                     _, s.weight = imgui.slider_float("share of cuts", s.weight, 0.0, 4.0, "x%.1f")
                     dur = info["duration"] if info else 0.0
-                    imgui.set_next_item_width(90)
-                    ch, v = imgui.drag_float("from (s)", s.start, 0.1, 0.0, max(0.0, dur), "%.1f")
-                    if ch:
-                        s.start = max(0.0, v)
+                    if s.ranges:
+                        parts = s.spans(dur) if dur else [tuple(r) for r in s.ranges]
+                        imgui.text(f"{len(parts)} parts, {clock(sum(b - a for a, b in parts))} used")
+                    else:
+                        imgui.set_next_item_width(90)
+                        ch, v = imgui.drag_float("from (s)", s.start, 0.1, 0.0, max(0.0, dur), "%.1f")
+                        if ch:
+                            s.start = max(0.0, v)
+                        imgui.same_line()
+                        imgui.set_next_item_width(90)
+                        end = s.end if s.end is not None else dur
+                        ch, v = imgui.drag_float("to (s)", end, 0.1, s.start, max(s.start, dur), "%.1f")
+                        if ch:
+                            s.end = None if dur and v >= dur - 0.05 else v
                     imgui.same_line()
-                    imgui.set_next_item_width(90)
-                    end = s.end if s.end is not None else dur
-                    ch, v = imgui.drag_float("to (s)", end, 0.1, s.start, max(s.start, dur), "%.1f")
-                    if ch:
-                        s.end = None if dur and v >= dur - 0.05 else v
+                    if imgui.small_button("Trim..."):
+                        self.open_trim(s)
+                    if imgui.is_item_hovered():
+                        imgui.set_tooltip("Watch the video and choose the parts shards are cut from")
                 else:
                     imgui.set_next_item_width(120)
                     ch, k = imgui.combo("motion", library.MOTIONS.index(s.motion) if s.motion in library.MOTIONS else 4,
