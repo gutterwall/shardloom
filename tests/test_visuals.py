@@ -57,8 +57,9 @@ def layer(shard, opacity=1.0, blend="normal"):
 # ---- when they strike and what they pick -----------------------------------------------------------------
 
 def test_off_by_default_and_added_after_every_other_effect():
-    assert events.NAMES[-1] == "visuals" and events.EVENTS["visuals"].group == "Visuals"
-    assert "visuals" not in events.PICTURE and len(events.PICTURE) == 17   # the shader's arrays are unchanged
+    # After every effect it came after (only Tape erase came later), so their strikes are unchanged.
+    assert events.NAMES[-2:] == ["visuals", "erase"] and events.EVENTS["visuals"].group == "Visuals"
+    assert "visuals" not in events.PICTURE and events.PICTURE[-1] == "erase" and len(events.PICTURE) == 18
     e = engine()
     e.project.shard_fx = {}
     assert all(e.state(i / 10).visual is None for i in range(200))

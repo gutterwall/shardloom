@@ -47,7 +47,7 @@ Run `shardloom` with no arguments (or double-click `Shardloom.exe`) and make a n
   - **Render:** render the current size, or several sizes one after the other into `renders/`.
 - **Shard effects** (beside Video settings, and in Perform too): effects that strike now and then across the whole picture, or on single layers.
   - **Digital glitch:** datamosh, pixel sort, block corruption, slice tear.
-  - **Analog:** VHS tracking, CRT, vertical roll, chroma bleed.
+  - **Analog:** VHS tracking, CRT, vertical roll, chroma bleed, tape erase (worn, half-erased tape: blocky snow eats in from the edges and fills the dark parts, with white dropouts and faded colour).
   - **Film:** film burn, light leak, film damage (scratches, dust, weave, flicker).
   - **Pyrotechnics:** fireworks, explosion (fireball, shockwave, flash and shake).
   - **Colour**, following the music: hue shift (further round the colour wheel when the song is intense), brightness (brighter when loud, darker when quiet) and saturation (richer when intense, greyer when calm). At full **how often** they're on all the time; lower, they come and go with the pulse setting. **Colour flip** is a strobe: while it strikes it flashes in time with the beat (1, 2 or 4 **flashes** a beat), and each flash turns over one or more of the red, green and blue channels, a new mix each time.

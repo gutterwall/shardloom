@@ -80,6 +80,9 @@ EVENTS = {
     "visuals": Event("MilkDrop", "Visuals", "A MilkDrop-style music visual, drawn live and mixed into the layers: "
                      "plus, minus, occlude, overlay, multiply or behind them as a background", 8.0, "fade",
                      peak=0.25, stack=True, options=DEFAULT_VISUALS),
+    # After visuals for the same reason.
+    "erase": Event("Tape erase", "Analog", "Worn, half-erased tape: blocky snow eats in from the edges and the dark "
+                   "parts, with dropouts", 1.2, "swell"),
 }
 NAMES = list(EVENTS)
 # The whole-picture ones, in shaders.EVENTS order.
