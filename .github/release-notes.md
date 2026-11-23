@@ -10,7 +10,15 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: the trim editor
+## New in this version: Tape erase
+
+A new **Analog** shard effect, on the desktop and on phones: **Tape erase**, the look of worn, half-erased videotape.
+
+- Chunky, pixelated tape snow eats in from the edges of the picture along a ragged front that wanders as it plays, and fills the dark parts.
+- Blocks of snow scatter just inside the front, white dropouts streak across, and the colour fades with the blacks lifted.
+- **Strength** sets how far in it reaches, with the usual **how often** and **pulse** sliders and the **try** button. It's off unless you turn it up, so existing projects look the same.
+
+## The trim editor (0.11)
 
 Choose exactly which parts of each video shards are cut from, by watching it, on the desktop and on phones.
 

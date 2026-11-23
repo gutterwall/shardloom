@@ -19,7 +19,7 @@ import { POSITIONS, FONTS } from "./titles.js";
 import { TrimEditor } from "./trim.js";
 import { Lane, Title, Modulation, Source, CHOICES, fromDict, normalise, starterProject, newSourceId, kindOf, sourceSpans } from "./project.js";
 
-export const VERSION = "0.11.0";
+export const VERSION = "0.12.0";
 
 // ---- app state -------------------------------------------------------------------
 
