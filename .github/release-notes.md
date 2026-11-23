@@ -10,7 +10,16 @@ Windows may warn that the app is from an unknown publisher, because it isn't cod
 
 `Shardloom.exe` also works from a terminal: `Shardloom.exe new`, `edit`, `render`, `pack` and the rest, the same as on Linux. See the README.
 
-## New in this version: MilkDrop-style visuals
+## New in this version: the trim editor
+
+Choose exactly which parts of each video shards are cut from, by watching it, on the desktop and on phones.
+
+- **Open it** from Media: **Trim...** under a video (on the desktop, double-clicking its picture works too). The video plays and scrubs (without sound) over a strip of its frames, where the parts in use are outlined and the rest is dimmed.
+- **Mark as many parts as you like.** Drag a part's ends on the strip, or move the playhead and press **Set start** (I) or **Set stop** (O). **Add part** (A), **Delete part** and **Whole video** do what they say. Each part has a play button, Left and Right step a frame (Shift: a second), and the table of parts takes exact times.
+- **Shards are cut only from the parts.** Each part is cut from as if it were a video of its own, so a longer part gets more of the cuts. The editor warns about a part shorter than the shortest shard, which gets none.
+- **Existing projects cut the same shards as before.** A video with one part keeps it as its from/to, as in earlier versions, and projects with several parts still open in older versions, which use the first part.
+
+## MilkDrop-style visuals (0.10)
 
 A **Visuals** group on the Shard effects page, on the desktop and on phones, with a **MilkDrop** effect: music visualisations drawn live and mixed into your layers.
 
